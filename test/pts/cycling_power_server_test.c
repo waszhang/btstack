@@ -176,6 +176,7 @@ static void show_usage(void){
     printf("a    - set angle\n");
     printf("x    - set top dead spot angle\n");
     printf("y    - set bottom dead spot angle\n");
+    printf("R    - reset values\n");
     printf("\n");
     printf("Ctrl-c - exit\n");
     printf("---\n");
@@ -186,9 +187,20 @@ static uint16_t force_magnitude_newton = 0;
 static uint16_t torque_magnitude_newton_m = 0;
 static uint16_t angle_deg = 0;
 
+static void cps_reset_values(void){
+    event_time_s = 0;
+    force_magnitude_newton = 0;
+    torque_magnitude_newton_m = 0;
+    angle_deg = 0;
+}
+
 static void stdin_process(char cmd){
 
     switch (cmd){
+        case 'R':
+            printf("reset all values\n");
+            cps_reset_values();
+            break;
         case 'u':
             printf("push update\n");
             cycling_power_service_server_update_values();
@@ -281,12 +293,12 @@ int btstack_main(void){
 
     uint32_t feature_flags = 0;   
     feature_flags |= (1 << CP_FEATURE_FLAG_PEDAL_POWER_BALANCE_SUPPORTED);
-    // feature_flags |= (1 << CP_FEATURE_FLAG_ACCUMULATED_TORQUE_SUPPORTED);
-    // feature_flags |= (1 << CP_FEATURE_FLAG_WHEEL_REVOLUTION_DATA_SUPPORTED);
-    // feature_flags |= (1 << CP_FEATURE_FLAG_CRANK_REVOLUTION_DATA_SUPPORTED);
-    // feature_flags |= (1 << CP_FEATURE_FLAG_EXTREME_ANGLES_SUPPORTED);
-    // feature_flags |= (1 << CP_FEATURE_FLAG_TOP_AND_BOTTOM_DEAD_SPOT_ANGLE_SUPPORTED);
-    // feature_flags |= (1 << CP_FEATURE_FLAG_ACCUMULATED_ENERGY_SUPPORTED);
+    feature_flags |= (1 << CP_FEATURE_FLAG_ACCUMULATED_TORQUE_SUPPORTED);
+    feature_flags |= (1 << CP_FEATURE_FLAG_WHEEL_REVOLUTION_DATA_SUPPORTED);
+    feature_flags |= (1 << CP_FEATURE_FLAG_CRANK_REVOLUTION_DATA_SUPPORTED);
+    feature_flags |= (1 << CP_FEATURE_FLAG_EXTREME_ANGLES_SUPPORTED);
+    feature_flags |= (1 << CP_FEATURE_FLAG_TOP_AND_BOTTOM_DEAD_SPOT_ANGLE_SUPPORTED);
+    feature_flags |= (1 << CP_FEATURE_FLAG_ACCUMULATED_ENERGY_SUPPORTED);
     feature_flags |= (1 << CP_FEATURE_FLAG_OFFSET_COMPENSATION_INDICATOR_SUPPORTED);
     feature_flags |= (1 << CP_FEATURE_FLAG_OFFSET_COMPENSATION_SUPPORTED);
     

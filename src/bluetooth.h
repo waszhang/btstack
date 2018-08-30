@@ -1069,24 +1069,24 @@ typedef enum {
 #define ATT_SIGNED_WRITE_COMMAND         0xD2
 
 // MARK: ATT Error Codes
-#define ATT_ERROR_INVALID_HANDLE                   0x01
-#define ATT_ERROR_READ_NOT_PERMITTED               0x02
-#define ATT_ERROR_WRITE_NOT_PERMITTED              0x03
-#define ATT_ERROR_INVALID_PDU                      0x04  
-#define ATT_ERROR_INSUFFICIENT_AUTHENTICATION      0x05
-#define ATT_ERROR_REQUEST_NOT_SUPPORTED            0x06
-#define ATT_ERROR_INVALID_OFFSET                   0x07
-#define ATT_ERROR_INSUFFICIENT_AUTHORIZATION       0x08
-#define ATT_ERROR_PREPARE_QUEUE_FULL               0x09
-#define ATT_ERROR_ATTRIBUTE_NOT_FOUND              0x0a
-#define ATT_ERROR_ATTRIBUTE_NOT_LONG               0x0b
-#define ATT_ERROR_INSUFFICIENT_ENCRYPTION_KEY_SIZE 0x0c
-#define ATT_ERROR_INVALID_ATTRIBUTE_VALUE_LENGTH   0x0d
-#define ATT_ERROR_UNLIKELY_ERROR                   0x0e
-#define ATT_ERROR_INSUFFICIENT_ENCRYPTION          0x0f
-#define ATT_ERROR_UNSUPPORTED_GROUP_TYPE           0x10
-#define ATT_ERROR_INSUFFICIENT_RESOURCES           0x11
-
+#define ATT_ERROR_INVALID_HANDLE                      0x01
+#define ATT_ERROR_READ_NOT_PERMITTED                  0x02
+#define ATT_ERROR_WRITE_NOT_PERMITTED                 0x03
+#define ATT_ERROR_INVALID_PDU                         0x04  
+#define ATT_ERROR_INSUFFICIENT_AUTHENTICATION         0x05
+#define ATT_ERROR_REQUEST_NOT_SUPPORTED               0x06
+#define ATT_ERROR_INVALID_OFFSET                      0x07
+#define ATT_ERROR_INSUFFICIENT_AUTHORIZATION          0x08
+#define ATT_ERROR_PREPARE_QUEUE_FULL                  0x09
+#define ATT_ERROR_ATTRIBUTE_NOT_FOUND                 0x0a
+#define ATT_ERROR_ATTRIBUTE_NOT_LONG                  0x0b
+#define ATT_ERROR_INSUFFICIENT_ENCRYPTION_KEY_SIZE    0x0c
+#define ATT_ERROR_INVALID_ATTRIBUTE_VALUE_LENGTH      0x0d
+#define ATT_ERROR_UNLIKELY_ERROR                      0x0e
+#define ATT_ERROR_INSUFFICIENT_ENCRYPTION             0x0f
+#define ATT_ERROR_UNSUPPORTED_GROUP_TYPE              0x10
+#define ATT_ERROR_INSUFFICIENT_RESOURCES              0x11
+#define ATT_ERROR_INAPPROPRIATE_CONNECTION_PARAMETERS 0x80
 // MARK: Attribute Property Flags
 #define ATT_PROPERTY_BROADCAST           0x01
 #define ATT_PROPERTY_READ                0x02

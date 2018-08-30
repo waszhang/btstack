@@ -40,12 +40,14 @@
 
 #include "bluetooth.h"
 #include "btstack_defines.h"
+#include "btstack_event.h"
 #include "ble/att_db.h"
 #include "ble/att_server.h"
 #include "btstack_util.h"
 #include "bluetooth_gatt.h"
 #include "btstack_debug.h"
 #include "l2cap.h"
+#include "hci.h"
 
 #include "ble/gatt-service/cycling_power_service_server.h"
 
@@ -80,8 +82,21 @@ typedef enum {
 	CP_RESPONSE_VALUE_OPERATION_FAILED
 } cycling_power_response_value_t;
 
+typedef enum {
+	CP_CONNECTION_INTERVAL_STATUS_NONE = 0,
+	CP_CONNECTION_INTERVAL_STATUS_ACCEPTED,
+	CP_CONNECTION_INTERVAL_STATUS_W2_UPDATE,
+	CP_CONNECTION_INTERVAL_STATUS_W4_UPDATE,
+	CP_CONNECTION_INTERVAL_STATUS_REJECTED
+} cycling_power_con_interval_status_t;
+
 typedef struct {
 	hci_con_handle_t con_handle;
+	// GATT connection management
+	uint16_t con_interval;
+	uint16_t con_interval_min;
+	uint16_t con_interval_max;
+	cycling_power_con_interval_status_t  con_interval_status;
 
 	// Cycling Power Measurement 
 	uint16_t measurement_value_handle;
@@ -163,6 +178,7 @@ typedef struct {
 
 static att_service_handler_t cycling_power_service;
 static cycling_power_t cycling_power;
+static btstack_packet_callback_registration_t hci_event_callback_registration;
 
 
 static uint16_t cycling_power_service_read_callback(hci_con_handle_t con_handle, uint16_t attribute_handle, uint16_t offset, uint8_t * buffer, uint16_t buffer_size){
@@ -482,8 +498,21 @@ static int cycling_power_service_write_callback(hci_con_handle_t con_handle, uin
 		if (buffer_size < 2){
 			return ATT_ERROR_INVALID_OFFSET;
 		}
-		instance->vector_client_configuration_descriptor_notify = little_endian_read_16(buffer, 0);
 		instance->con_handle = con_handle;
+
+#ifdef ENABLE_ATT_DELAYED_RESPONSE			
+		printf("\n");
+		if (instance->con_interval_status == CP_CONNECTION_INTERVAL_STATUS_REJECTED){
+			return ATT_ERROR_INAPPROPRIATE_CONNECTION_PARAMETERS;
+		}
+		if (instance->con_interval > instance->con_interval_max || instance->con_interval < instance->con_interval_min){
+			printf("gap_request_connection_parameter_update \n");
+		   	instance->con_interval_status = CP_CONNECTION_INTERVAL_STATUS_W4_UPDATE;
+		   	gap_request_connection_parameter_update(instance->con_handle, instance->con_interval_min, instance->con_interval_max, 4, 100);    // 15 ms, 4, 1s
+			return ATT_ERROR_WRITE_RESPONSE_PENDING;
+		}
+#endif
+		instance->vector_client_configuration_descriptor_notify = little_endian_read_16(buffer, 0);	
 		if (instance->vector_client_configuration_descriptor_notify){
 			printf("vector enable notification\n");
 		}
@@ -535,9 +564,63 @@ static int cycling_power_service_write_callback(hci_con_handle_t con_handle, uin
 	return 0;
 }
 
+static void packet_handler (uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size){
+    UNUSED(channel);
+    UNUSED(size);
+    cycling_power_t * instance = &cycling_power;
+    uint8_t event = hci_event_packet_get_type(packet);
+
+    switch (packet_type) {
+        case HCI_EVENT_PACKET:
+            switch (event){
+		        case HCI_EVENT_LE_META:
+		            switch (hci_event_le_meta_get_subevent_code(packet)){
+		            	case HCI_SUBEVENT_LE_CONNECTION_COMPLETE:
+				            instance->con_handle = hci_subevent_le_connection_complete_get_connection_handle(packet);
+				            // print connection parameters (without using float operations)
+				            instance->con_interval = hci_subevent_le_connection_complete_get_conn_interval(packet);
+				            printf("Connection Interval: %u, %u.%02u ms\n", instance->con_interval, instance->con_interval * 125 / 100, 25 * (instance->con_interval & 3));
+				            printf("Connection Latency: %u\n", hci_subevent_le_connection_complete_get_conn_latency(packet));  
+				            break;
+		              	case HCI_SUBEVENT_LE_CONNECTION_UPDATE_COMPLETE:
+		              		instance->con_interval = hci_subevent_le_connection_update_complete_get_conn_interval(packet);
+				            printf("Connection Interval: %u, %u.%02u ms\n", instance->con_interval, instance->con_interval * 125 / 100, 25 * (instance->con_interval & 3));
+				            instance->con_interval_status = CP_CONNECTION_INTERVAL_STATUS_ACCEPTED;
+				            att_server_response_ready(l2cap_event_connection_parameter_update_response_get_handle(packet));
+		              		break;
+		            	default:
+		            		break;
+		            }
+		            break;
+              	case L2CAP_EVENT_CONNECTION_PARAMETER_UPDATE_RESPONSE:
+              		if (l2cap_event_connection_parameter_update_response_get_result(packet) == ERROR_CODE_SUCCESS){
+              			instance->con_interval_status = CP_CONNECTION_INTERVAL_STATUS_W4_UPDATE;
+              		} else {
+              			instance->con_interval_status = CP_CONNECTION_INTERVAL_STATUS_REJECTED;
+              			att_server_response_ready(l2cap_event_connection_parameter_update_response_get_handle(packet));
+              		}
+              		printf("L2CAP Connection Parameter Update Complete, response: %x\n", instance->con_interval_status);
+                    break;
+                default:
+                    break;
+             }
+
+        default:
+            break;
+    }
+}
+
 void cycling_power_service_server_init(uint32_t feature_flags, cycling_power_pedal_power_balance_reference_t reference, cycling_power_torque_source_t torque_source){
 	cycling_power_t * instance = &cycling_power;
-	
+	// TODO: remove hardcoded initialization
+	instance->con_interval_min = 6;
+	instance->con_interval_max = 6;
+	instance->con_interval_status = CP_CONNECTION_INTERVAL_STATUS_NONE;
+    
+    hci_event_callback_registration.callback = &packet_handler;
+    hci_add_event_handler(&hci_event_callback_registration);
+    l2cap_register_packet_handler(&packet_handler);
+
 	instance->sensor_location = CP_SENSOR_LOCATION_OTHER;
 	instance->feature_flags = feature_flags;
 	instance->pedal_power_balance_reference = reference;
@@ -630,6 +713,7 @@ void cycling_power_service_add_energy(uint16_t energy_kJ){
 	} else {
 		instance->accumulated_energy_kJ = 0xffff;
 	}
+	printf("energy %d\n", instance->accumulated_energy_kJ);
 } 
 
 void cycling_power_service_server_set_instantaneous_power(int16_t instantaneous_power_watt){
