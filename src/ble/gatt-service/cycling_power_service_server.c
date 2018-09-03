@@ -153,6 +153,8 @@ typedef struct {
 	uint16_t num_supported_sensor_locations;
 	uint16_t crank_length_mm; 							// resolution 1/2 mm
 	uint16_t chain_length_mm; 							// resolution 1 mm
+	uint16_t chain_weight_g; 							// resolution 1 gram
+	uint16_t span_length_mm; 							// resolution 1 mm
 	
 	// Cycling Power Vector
 	uint16_t vector_value_handle;
@@ -461,14 +463,20 @@ static void cycling_power_service_response_can_send_now(void * context){
 			}
 			break;
 		}
-		
 		case CP_OPCODE_REQUEST_CRANK_LENGTH:
 			little_endian_store_16(value, pos, instance->crank_length_mm);
 			pos += 2;
 			break;
-
 		case CP_OPCODE_REQUEST_CHAIN_LENGTH:
 			little_endian_store_16(value, pos, instance->chain_length_mm);
+			pos += 2;
+			break;
+		case CP_OPCODE_REQUEST_CHAIN_WEIGHT:
+			little_endian_store_16(value, pos, instance->chain_weight_g);
+			pos += 2;
+			break;
+		case CP_OPCODE_REQUEST_SPAN_LENGTH:
+			little_endian_store_16(value, pos, instance->span_length_mm);
 			pos += 2;
 			break;
 		default:
@@ -604,7 +612,6 @@ static int cycling_power_service_write_callback(hci_con_handle_t con_handle, uin
 				if (!has_feature(CP_FEATURE_FLAG_CRANK_LENGTH_ADJUSTMENT_SUPPORTED)) break;
 				instance->response_value = CP_RESPONSE_VALUE_SUCCESS;
 				break;
-
 			case CP_OPCODE_SET_CRANK_LENGTH:
 				if (!has_feature(CP_FEATURE_FLAG_CRANK_LENGTH_ADJUSTMENT_SUPPORTED)) break;
 				instance->crank_length_mm = little_endian_read_16(buffer, pos);
@@ -615,13 +622,31 @@ static int cycling_power_service_write_callback(hci_con_handle_t con_handle, uin
 				if (!has_feature(CP_FEATURE_FLAG_CHAIN_LENGTH_ADJUSTMENT_SUPPORTED)) break;
 				instance->response_value = CP_RESPONSE_VALUE_SUCCESS;
 				break;
-
 			case CP_OPCODE_SET_CHAIN_LENGTH:
 				if (!has_feature(CP_FEATURE_FLAG_CHAIN_LENGTH_ADJUSTMENT_SUPPORTED)) break;
 				instance->chain_length_mm = little_endian_read_16(buffer, pos);
 				instance->response_value = CP_RESPONSE_VALUE_SUCCESS;
 				break;
 
+			case CP_OPCODE_REQUEST_CHAIN_WEIGHT:
+				if (!has_feature(CP_FEATURE_FLAG_CHAIN_WEIGHT_ADJUSTMENT_SUPPORTED)) break;
+				instance->response_value = CP_RESPONSE_VALUE_SUCCESS;
+				break;
+			case CP_OPCODE_SET_CHAIN_WEIGHT:
+				if (!has_feature(CP_FEATURE_FLAG_CHAIN_WEIGHT_ADJUSTMENT_SUPPORTED)) break;
+				instance->chain_weight_g = little_endian_read_16(buffer, pos);
+				instance->response_value = CP_RESPONSE_VALUE_SUCCESS;
+				break;
+
+			case CP_OPCODE_REQUEST_SPAN_LENGTH:
+				if (!has_feature(CP_FEATURE_FLAG_SPAN_LENGTH_ADJUSTMENT_SUPPORTED)) break;
+				instance->response_value = CP_RESPONSE_VALUE_SUCCESS;
+				break;
+			case CP_OPCODE_SET_SPAN_LENGTH:
+				if (!has_feature(CP_FEATURE_FLAG_SPAN_LENGTH_ADJUSTMENT_SUPPORTED)) break;
+				instance->span_length_mm = little_endian_read_16(buffer, pos);
+				instance->response_value = CP_RESPONSE_VALUE_SUCCESS;
+				break;
 			default:
 				break;
 		}
