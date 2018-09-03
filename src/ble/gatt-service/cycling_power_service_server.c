@@ -84,8 +84,9 @@ typedef enum {
 
 typedef enum {
 	CP_CONNECTION_INTERVAL_STATUS_NONE = 0,
+	CP_CONNECTION_INTERVAL_STATUS_RECEIVED,
 	CP_CONNECTION_INTERVAL_STATUS_ACCEPTED,
-	CP_CONNECTION_INTERVAL_STATUS_W2_UPDATE,
+	CP_CONNECTION_INTERVAL_STATUS_W4_L2CAP_RESPONSE,
 	CP_CONNECTION_INTERVAL_STATUS_W4_UPDATE,
 	CP_CONNECTION_INTERVAL_STATUS_REJECTED
 } cycling_power_con_interval_status_t;
@@ -148,6 +149,10 @@ typedef struct {
 	// Sensor Location
 	uint16_t sensor_location_value_handle;
 	cycling_power_sensor_location_t sensor_location; 	// see cycling_power_sensor_location_t
+	cycling_power_sensor_location_t * supported_sensor_locations;
+	uint16_t num_supported_sensor_locations;
+	uint16_t crank_length_mm; 							// resolution 1/2 mm
+	uint16_t chain_length_mm; 							// resolution 1 mm
 	
 	// Cycling Power Vector
 	uint16_t vector_value_handle;
@@ -381,6 +386,7 @@ static void cycling_power_service_measurement_can_send_now(void * context){
 				pos += 2;
 				break;
 			case CP_MEASUREMENT_FLAG_WHEEL_REVOLUTION_DATA_PRESENT:
+				printf("CP_MEASUREMENT_FLAG_WHEEL_REVOLUTION_DATA_PRESENT: 0%04x \n", instance->cumulative_wheel_revolutions);
 				little_endian_store_32(value, pos, instance->cumulative_wheel_revolutions);
 				pos += 4;
 				little_endian_store_16(value, pos, instance->last_wheel_event_time_s);
@@ -439,13 +445,32 @@ static void cycling_power_service_response_can_send_now(void * context){
 		printf("instance is null (cycling_power_service_response_can_send_now)\n");
 		return;
 	}
-		
-	uint8_t value[3 + sizeof(cycling_power_sensor_location_t)];
+	
+	printf("sizeof(cycling_power_sensor_location_t) %lu \n", sizeof(cycling_power_sensor_location_t));
+	uint8_t value[3 + 25];
 	int pos = 0;
 	value[pos++] = CP_OPCODE_RESPONSE_CODE;
 	value[pos++] = instance->request_opcode;
 	value[pos++] = instance->response_value;
+	
 	switch (instance->request_opcode){
+		case CP_OPCODE_REQUEST_SUPPORTED_SENSOR_LOCATIONS:{
+			int i;
+			for (i=0; i<instance->num_supported_sensor_locations; i++){
+				value[pos++] = instance->supported_sensor_locations[i]; 
+			}
+			break;
+		}
+		
+		case CP_OPCODE_REQUEST_CRANK_LENGTH:
+			little_endian_store_16(value, pos, instance->crank_length_mm);
+			pos += 2;
+			break;
+
+		case CP_OPCODE_REQUEST_CHAIN_LENGTH:
+			little_endian_store_16(value, pos, instance->chain_length_mm);
+			pos += 2;
+			break;
 		default:
 			break;
 	}
@@ -501,22 +526,25 @@ static int cycling_power_service_write_callback(hci_con_handle_t con_handle, uin
 		instance->con_handle = con_handle;
 
 #ifdef ENABLE_ATT_DELAYED_RESPONSE			
-		printf("\n");
-		if (instance->con_interval_status == CP_CONNECTION_INTERVAL_STATUS_REJECTED){
-			return ATT_ERROR_INAPPROPRIATE_CONNECTION_PARAMETERS;
-		}
-		if (instance->con_interval > instance->con_interval_max || instance->con_interval < instance->con_interval_min){
-			printf("gap_request_connection_parameter_update \n");
-		   	instance->con_interval_status = CP_CONNECTION_INTERVAL_STATUS_W4_UPDATE;
-		   	gap_request_connection_parameter_update(instance->con_handle, instance->con_interval_min, instance->con_interval_max, 4, 100);    // 15 ms, 4, 1s
-			return ATT_ERROR_WRITE_RESPONSE_PENDING;
+		switch (instance->con_interval_status){
+			case CP_CONNECTION_INTERVAL_STATUS_REJECTED:
+				return ATT_ERROR_INAPPROPRIATE_CONNECTION_PARAMETERS;
+		
+			case CP_CONNECTION_INTERVAL_STATUS_ACCEPTED:
+			case CP_CONNECTION_INTERVAL_STATUS_RECEIVED:
+				if (instance->con_interval > instance->con_interval_max || instance->con_interval < instance->con_interval_min){
+					printf("ignore gap_request_connection_parameter_update \n");
+				   	instance->con_interval_status = CP_CONNECTION_INTERVAL_STATUS_W4_L2CAP_RESPONSE;
+				   	// gap_request_connection_parameter_update(instance->con_handle, instance->con_interval_min, instance->con_interval_max, 4, 100);    // 15 ms, 4, 1s
+					return ATT_ERROR_WRITE_RESPONSE_PENDING;
+				}
+				instance->vector_client_configuration_descriptor_notify = little_endian_read_16(buffer, 0);	
+				return 0;
+			default:
+				return ATT_ERROR_WRITE_RESPONSE_PENDING;
+				
 		}
 #endif
-		instance->vector_client_configuration_descriptor_notify = little_endian_read_16(buffer, 0);	
-		if (instance->vector_client_configuration_descriptor_notify){
-			printf("vector enable notification\n");
-		}
-		return 0;
 	}
 
 	if (attribute_handle == instance->control_point_client_configuration_descriptor_handle){
@@ -542,14 +570,63 @@ static int cycling_power_service_write_callback(hci_con_handle_t con_handle, uin
 	if (attribute_handle == instance->control_point_value_handle){
 		// if (instance->control_point_client_configuration_descriptor_indicate == 0) return CSC_ERROR_CODE_CCC_DESCRIPTOR_IMPROPERLY_CONFIGURED;
 		// if (instance->request_opcode != CSC_OPCODE_IDLE) return CSC_ERROR_CODE_PROCEDURE_ALREADY_IN_PROGRESS;
-
-		instance->request_opcode = buffer[0];
-		instance->response_value = CP_RESPONSE_VALUE_SUCCESS;
+		int pos = 0;
+		instance->request_opcode = buffer[pos++];
+		instance->response_value = CP_RESPONSE_VALUE_OP_CODE_NOT_SUPPORTED;
 		
 		switch (instance->request_opcode){
+			case CP_OPCODE_SET_CUMULATIVE_VALUE:
+				if (!has_feature(CP_FEATURE_FLAG_WHEEL_REVOLUTION_DATA_SUPPORTED)) break;
+				instance->cumulative_wheel_revolutions = little_endian_read_32(buffer, pos);
+				instance->response_value = CP_RESPONSE_VALUE_SUCCESS;
+				break;
+			
+			case CP_OPCODE_REQUEST_SUPPORTED_SENSOR_LOCATIONS:
+				if (!has_feature(CP_FEATURE_FLAG_MULTIPLE_SENSOR_LOCATIONS_SUPPORTED)) break;
+				instance->response_value = CP_RESPONSE_VALUE_SUCCESS;
+				break;
+			
+			case CP_OPCODE_UPDATE_SENSOR_LOCATION:
+				if (!has_feature(CP_FEATURE_FLAG_MULTIPLE_SENSOR_LOCATIONS_SUPPORTED)) break;
+				cycling_power_sensor_location_t location = buffer[pos];
+				int i;
+				instance->response_value = CP_RESPONSE_VALUE_INVALID_PARAMETER;
+				for (i=0; i<instance->num_supported_sensor_locations; i++){
+					if (instance->supported_sensor_locations[i] == location){
+						instance->sensor_location = location;
+						instance->response_value = CP_RESPONSE_VALUE_SUCCESS;
+						break;
+					}
+				}
+				break;
+			
+			case CP_OPCODE_REQUEST_CRANK_LENGTH:
+				if (!has_feature(CP_FEATURE_FLAG_CRANK_LENGTH_ADJUSTMENT_SUPPORTED)) break;
+				instance->response_value = CP_RESPONSE_VALUE_SUCCESS;
+				break;
+
+			case CP_OPCODE_SET_CRANK_LENGTH:
+				if (!has_feature(CP_FEATURE_FLAG_CRANK_LENGTH_ADJUSTMENT_SUPPORTED)) break;
+				instance->crank_length_mm = little_endian_read_16(buffer, pos);
+				instance->response_value = CP_RESPONSE_VALUE_SUCCESS;
+				break;
+
+			case CP_OPCODE_REQUEST_CHAIN_LENGTH:
+				if (!has_feature(CP_FEATURE_FLAG_CHAIN_LENGTH_ADJUSTMENT_SUPPORTED)) break;
+				instance->response_value = CP_RESPONSE_VALUE_SUCCESS;
+				break;
+
+			case CP_OPCODE_SET_CHAIN_LENGTH:
+				if (!has_feature(CP_FEATURE_FLAG_CHAIN_LENGTH_ADJUSTMENT_SUPPORTED)) break;
+				instance->chain_length_mm = little_endian_read_16(buffer, pos);
+				instance->response_value = CP_RESPONSE_VALUE_SUCCESS;
+				break;
+
 			default:
 				break;
 		}
+		
+		// printf("opcode %02x, expected (%02x), has feature %d\n", instance->request_opcode, CP_OPCODE_SET_CUMULATIVE_VALUE, has_feature(CP_FEATURE_FLAG_WHEEL_REVOLUTION_DATA_SUPPORTED));
 		printf("control point, opcode %02x, response %02x\n", instance->request_opcode, instance->response_value);
 	
 		if (instance->control_point_client_configuration_descriptor_indicate){
@@ -579,28 +656,38 @@ static void packet_handler (uint8_t packet_type, uint16_t channel, uint8_t *pack
 				            instance->con_handle = hci_subevent_le_connection_complete_get_connection_handle(packet);
 				            // print connection parameters (without using float operations)
 				            instance->con_interval = hci_subevent_le_connection_complete_get_conn_interval(packet);
-				            printf("Connection Interval: %u, %u.%02u ms\n", instance->con_interval, instance->con_interval * 125 / 100, 25 * (instance->con_interval & 3));
-				            printf("Connection Latency: %u\n", hci_subevent_le_connection_complete_get_conn_latency(packet));  
+				            printf("Initial Connection Interval: %u, %u.%02u ms\n", instance->con_interval, instance->con_interval * 125 / 100, 25 * (instance->con_interval & 3));
+				            printf("Initial Connection Latency: %u\n", hci_subevent_le_connection_complete_get_conn_latency(packet));
+				            instance->con_interval_status = CP_CONNECTION_INTERVAL_STATUS_RECEIVED;
 				            break;
 		              	case HCI_SUBEVENT_LE_CONNECTION_UPDATE_COMPLETE:
-		              		instance->con_interval = hci_subevent_le_connection_update_complete_get_conn_interval(packet);
-				            printf("Connection Interval: %u, %u.%02u ms\n", instance->con_interval, instance->con_interval * 125 / 100, 25 * (instance->con_interval & 3));
-				            instance->con_interval_status = CP_CONNECTION_INTERVAL_STATUS_ACCEPTED;
-				            att_server_response_ready(l2cap_event_connection_parameter_update_response_get_handle(packet));
+		              		if (instance->con_interval_status != CP_CONNECTION_INTERVAL_STATUS_W4_UPDATE) return;
+              				
+              				if (instance->con_interval > instance->con_interval_max || instance->con_interval < instance->con_interval_min){
+								instance->con_interval = hci_subevent_le_connection_update_complete_get_conn_interval(packet);
+					            printf("Updated Connection Interval: %u, %u.%02u ms\n", instance->con_interval, instance->con_interval * 125 / 100, 25 * (instance->con_interval & 3));
+					            printf("Updated Connection Latency: %u\n", hci_subevent_le_connection_update_complete_get_conn_latency(packet));  
+					            instance->con_interval_status = CP_CONNECTION_INTERVAL_STATUS_ACCEPTED;
+					        } else {
+		              			instance->con_interval_status = CP_CONNECTION_INTERVAL_STATUS_REJECTED;
+		              		}
+		              		att_server_response_ready(l2cap_event_connection_parameter_update_response_get_handle(packet));
 		              		break;
 		            	default:
 		            		break;
 		            }
 		            break;
               	case L2CAP_EVENT_CONNECTION_PARAMETER_UPDATE_RESPONSE:
+              		if (instance->con_interval_status != CP_CONNECTION_INTERVAL_STATUS_W4_L2CAP_RESPONSE) return;
+              		
+              		printf("L2CAP Connection Parameter Update Complete, response: %x\n", l2cap_event_connection_parameter_update_response_get_result(packet));
               		if (l2cap_event_connection_parameter_update_response_get_result(packet) == ERROR_CODE_SUCCESS){
               			instance->con_interval_status = CP_CONNECTION_INTERVAL_STATUS_W4_UPDATE;
               		} else {
               			instance->con_interval_status = CP_CONNECTION_INTERVAL_STATUS_REJECTED;
               			att_server_response_ready(l2cap_event_connection_parameter_update_response_get_handle(packet));
               		}
-              		printf("L2CAP Connection Parameter Update Complete, response: %x\n", instance->con_interval_status);
-                    break;
+              		break;
                 default:
                     break;
              }
@@ -610,7 +697,11 @@ static void packet_handler (uint8_t packet_type, uint16_t channel, uint8_t *pack
     }
 }
 
-void cycling_power_service_server_init(uint32_t feature_flags, cycling_power_pedal_power_balance_reference_t reference, cycling_power_torque_source_t torque_source){
+void cycling_power_service_server_init(uint32_t feature_flags, 
+	cycling_power_pedal_power_balance_reference_t reference, cycling_power_torque_source_t torque_source,
+	cycling_power_sensor_location_t * supported_sensor_locations, uint16_t num_supported_sensor_locations,
+	cycling_power_sensor_location_t   current_sensor_location){
+
 	cycling_power_t * instance = &cycling_power;
 	// TODO: remove hardcoded initialization
 	instance->con_interval_min = 6;
@@ -621,7 +712,13 @@ void cycling_power_service_server_init(uint32_t feature_flags, cycling_power_ped
     hci_add_event_handler(&hci_event_callback_registration);
     l2cap_register_packet_handler(&packet_handler);
 
-	instance->sensor_location = CP_SENSOR_LOCATION_OTHER;
+	instance->sensor_location = current_sensor_location;
+	instance->num_supported_sensor_locations = 0;
+	if (supported_sensor_locations != NULL){
+		instance->num_supported_sensor_locations = num_supported_sensor_locations;
+		instance->supported_sensor_locations = supported_sensor_locations;
+	}
+	
 	instance->feature_flags = feature_flags;
 	instance->pedal_power_balance_reference = reference;
 	instance->torque_source = torque_source;

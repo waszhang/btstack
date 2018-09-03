@@ -62,6 +62,16 @@ const uint8_t adv_data[] = {
 
 const uint8_t adv_data_len = sizeof(adv_data);
 
+static cycling_power_sensor_location_t supported_sensor_locations[] = {
+    CP_SENSOR_LOCATION_TOP_OF_SHOE,
+    CP_SENSOR_LOCATION_IN_SHOE,
+    CP_SENSOR_LOCATION_HIP,
+    CP_SENSOR_LOCATION_FRONT_WHEEL,
+    CP_SENSOR_LOCATION_LEFT_CRANK,
+    CP_SENSOR_LOCATION_RIGHT_CRANK
+};
+static uint16_t num_supported_sensor_locations = 6;
+
 #ifdef HAVE_BTSTACK_STDIN
 
 
@@ -293,22 +303,29 @@ int btstack_main(void){
 
     uint32_t feature_flags = 0;   
     feature_flags |= (1 << CP_FEATURE_FLAG_PEDAL_POWER_BALANCE_SUPPORTED);
-    feature_flags |= (1 << CP_FEATURE_FLAG_ACCUMULATED_TORQUE_SUPPORTED);
-    feature_flags |= (1 << CP_FEATURE_FLAG_WHEEL_REVOLUTION_DATA_SUPPORTED);
-    feature_flags |= (1 << CP_FEATURE_FLAG_CRANK_REVOLUTION_DATA_SUPPORTED);
-    feature_flags |= (1 << CP_FEATURE_FLAG_EXTREME_ANGLES_SUPPORTED);
-    feature_flags |= (1 << CP_FEATURE_FLAG_TOP_AND_BOTTOM_DEAD_SPOT_ANGLE_SUPPORTED);
-    feature_flags |= (1 << CP_FEATURE_FLAG_ACCUMULATED_ENERGY_SUPPORTED);
-    feature_flags |= (1 << CP_FEATURE_FLAG_OFFSET_COMPENSATION_INDICATOR_SUPPORTED);
-    feature_flags |= (1 << CP_FEATURE_FLAG_OFFSET_COMPENSATION_SUPPORTED);
+    // feature_flags |= (1 << CP_FEATURE_FLAG_ACCUMULATED_TORQUE_SUPPORTED);
+    // feature_flags |= (1 << CP_FEATURE_FLAG_WHEEL_REVOLUTION_DATA_SUPPORTED);
+    // feature_flags |= (1 << CP_FEATURE_FLAG_CRANK_REVOLUTION_DATA_SUPPORTED);
+    // feature_flags |= (1 << CP_FEATURE_FLAG_EXTREME_ANGLES_SUPPORTED);
+    // feature_flags |= (1 << CP_FEATURE_FLAG_TOP_AND_BOTTOM_DEAD_SPOT_ANGLE_SUPPORTED);
+    // feature_flags |= (1 << CP_FEATURE_FLAG_ACCUMULATED_ENERGY_SUPPORTED);
+    // feature_flags |= (1 << CP_FEATURE_FLAG_OFFSET_COMPENSATION_INDICATOR_SUPPORTED);
+    // feature_flags |= (1 << CP_FEATURE_FLAG_OFFSET_COMPENSATION_SUPPORTED);
     
-    feature_flags |= (1 << CP_FEATURE_FLAG_EXTREME_MAGNITUDES_SUPPORTED);
+    // feature_flags |= (1 << CP_FEATURE_FLAG_EXTREME_MAGNITUDES_SUPPORTED);
     // feature_flags |= (CP_SENSOR_MEASUREMENT_CONTEXT_FORCE << CP_FEATURE_FLAG_SENSOR_MEASUREMENT_CONTEXT);
-    feature_flags |= (CP_SENSOR_MEASUREMENT_CONTEXT_TORQUE << CP_FEATURE_FLAG_SENSOR_MEASUREMENT_CONTEXT);
+    // feature_flags |= (CP_SENSOR_MEASUREMENT_CONTEXT_TORQUE << CP_FEATURE_FLAG_SENSOR_MEASUREMENT_CONTEXT);
 
-    feature_flags |= (1 << CP_FEATURE_FLAG_INSTANTANEOUS_MEASUREMENT_DIRECTION_SUPPORTED);
+    // feature_flags |= (1 << CP_FEATURE_FLAG_INSTANTANEOUS_MEASUREMENT_DIRECTION_SUPPORTED);
+    feature_flags |= (1 << CP_FEATURE_FLAG_MULTIPLE_SENSOR_LOCATIONS_SUPPORTED);
+    feature_flags |= (1 << CP_FEATURE_FLAG_CRANK_LENGTH_ADJUSTMENT_SUPPORTED);
+    feature_flags |= (1 << CP_FEATURE_FLAG_CHAIN_LENGTH_ADJUSTMENT_SUPPORTED);
 
-    cycling_power_service_server_init(feature_flags, CP_PEDAL_POWER_BALANCE_REFERENCE_LEFT, CP_TORQUE_SOURCE_CRANK);
+
+    printf(" num_supported_sensor_locations %lu\n", sizeof(num_supported_sensor_locations));
+
+    cycling_power_service_server_init(feature_flags, CP_PEDAL_POWER_BALANCE_REFERENCE_LEFT, CP_TORQUE_SOURCE_WHEEL, 
+        &supported_sensor_locations[0], num_supported_sensor_locations, supported_sensor_locations[0]);
 
     uint16_t measurement_flags = cycling_power_service_measurement_flags();
     dump_feature_flags(feature_flags);

@@ -163,7 +163,10 @@ typedef enum {
 /**
  * @brief Init Server with ATT DB
  */
-void cycling_power_service_server_init(uint32_t feature_flags, cycling_power_pedal_power_balance_reference_t reference, cycling_power_torque_source_t torque_source);
+void cycling_power_service_server_init(uint32_t feature_flags, 
+	cycling_power_pedal_power_balance_reference_t reference, cycling_power_torque_source_t torque_source, 
+	cycling_power_sensor_location_t * supported_sensor_locations, uint16_t num_supported_sensor_locations,
+	cycling_power_sensor_location_t current_sensor_location);
 /**
  * @brief Push update
  * @note triggers notifications if subscribed
