@@ -71,10 +71,9 @@ static cycling_power_sensor_location_t supported_sensor_locations[] = {
     CP_SENSOR_LOCATION_RIGHT_CRANK
 };
 static uint16_t num_supported_sensor_locations = 6;
+static gatt_date_time_t calibration_date = {2018, 1, 1, 13, 40, 50};
 
 #ifdef HAVE_BTSTACK_STDIN
-
-
 static char * measurement_flag_str[] = {
     "1   Pedal Power Balance",
     "2   Pedal Power Balance Reference", // Unknown/Left
@@ -322,7 +321,7 @@ int btstack_main(void){
     feature_flags |= (1 << CP_FEATURE_FLAG_CHAIN_LENGTH_ADJUSTMENT_SUPPORTED);
     feature_flags |= (1 << CP_FEATURE_FLAG_CHAIN_WEIGHT_ADJUSTMENT_SUPPORTED);
     feature_flags |= (1 << CP_FEATURE_FLAG_SPAN_LENGTH_ADJUSTMENT_SUPPORTED);
-    // feature_flags |= (1 << CP_FEATURE_FLAG_CHAIN_LENGTH_ADJUSTMENT_SUPPORTED);
+    feature_flags |= (1 << CP_FEATURE_FLAG_FACTORY_CALIBRATION_DATE_SUPPORTED);
     // feature_flags |= (1 << CP_FEATURE_FLAG_CHAIN_LENGTH_ADJUSTMENT_SUPPORTED);
     // feature_flags |= (1 << CP_FEATURE_FLAG_CHAIN_LENGTH_ADJUSTMENT_SUPPORTED);
 
@@ -331,6 +330,8 @@ int btstack_main(void){
 
     cycling_power_service_server_init(feature_flags, CP_PEDAL_POWER_BALANCE_REFERENCE_LEFT, CP_TORQUE_SOURCE_WHEEL, 
         &supported_sensor_locations[0], num_supported_sensor_locations, supported_sensor_locations[0]);
+
+    cycling_power_service_server_set_factory_calibration_date(calibration_date);
 
     uint16_t measurement_flags = cycling_power_service_measurement_flags();
     dump_feature_flags(feature_flags);

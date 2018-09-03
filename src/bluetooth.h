@@ -1142,6 +1142,17 @@ typedef enum {
 #define GATT_CLIENT_CHARACTERISTICS_CONFIGURATION_NOTIFICATION  1
 #define GATT_CLIENT_CHARACTERISTICS_CONFIGURATION_INDICATION    2
 
+// Bluetooth GATT types
+
+typedef struct {
+    uint16_t year;      // 0 - year  is not known; or [1582,9999]
+    uint8_t  month;     // 0 - month is not known; or [1,12]
+    uint8_t  day;       // 0 - day   is not known; or [1,31]
+    uint8_t  hours;     // [0,23]
+    uint8_t  minutes;   // [0,59]
+    uint8_t  seconds;   // [0,59]
+} gatt_date_time_t;
+
 // GAP Service and Characteristics
 #define GAP_SERVICE_UUID               0x1800
 #define GAP_DEVICE_NAME_UUID           0x2a00
