@@ -173,7 +173,18 @@ void cycling_power_service_server_init(uint32_t feature_flags,
  */
 void cycling_power_service_server_update_values(void);
 
-void cycling_power_service_server_set_factory_calibration_date(gatt_date_time_t date);
+
+/**
+ * @brief Register callback for the calibration. 
+ * @param callback
+ */
+void cycling_power_service_server_packet_handler(btstack_packet_handler_t callback);
+
+void cycling_power_server_force_magnitude_calibration_done(uint16_t calibrated_value);
+void cycling_power_server_tourque_magnitude_calibration_done(uint16_t calibrated_value);
+
+int  cycling_power_service_server_set_factory_calibration_date(gatt_date_time_t date);
+void cycling_power_service_server_set_sampling_rate(uint8_t sampling_rate_hz);
 
 void cycling_power_service_server_add_torque(int16_t torque_m); 
 void cycling_power_service_server_add_wheel_revolution(int32_t wheel_revolution, uint16_t wheel_event_time_s); 

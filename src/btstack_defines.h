@@ -1018,6 +1018,7 @@ typedef uint8_t sm_key_t[16];
 #define HCI_EVENT_HID_META                                 0xEF
 #define HCI_EVENT_A2DP_META                                0xF0
 #define HCI_EVENT_HIDS_META                                0xF1
+#define HCI_EVENT_GATT_SERVICE_META                        0xF2
 
 // Potential other meta groups
 // #define HCI_EVENT_BNEP_META                                0xxx
@@ -2115,5 +2116,14 @@ typedef uint8_t sm_key_t[16];
  * @param enable
 */
 #define HIDS_SUBEVENT_INPUT_REPORT_ENABLE                                   0x05
+
+// GATT Service Meta event group
+
+/**
+ * @format 12
+ * @param subevent_code
+ * @param con_handle
+*/
+#define GATT_SERVICE_SUBEVENT_CYCLING_POWER_START_CALIBRATION               0x01
 
 #endif

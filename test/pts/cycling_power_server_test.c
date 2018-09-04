@@ -273,7 +273,10 @@ static void stdin_process(char cmd){
             printf("set bottom dead spot angle\n");
             cycling_power_service_server_set_bottom_dead_spot_angle(20); 
             break;
-
+        case 'z':
+            printf("stop calibration\n");
+            cycling_power_server_force_magnitude_calibration_done(force_magnitude_newton); 
+            break;
         case '\n':
         case '\r':
             break;
@@ -283,6 +286,25 @@ static void stdin_process(char cmd){
     }
 }
 #endif
+
+
+static void packet_handler (uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size){
+    UNUSED(channel);
+    UNUSED(size);
+
+    if (packet_type != HCI_EVENT_PACKET) return;
+    if (hci_event_packet_get_type(packet) != HCI_EVENT_GATT_SERVICE_META) return;
+
+    switch (packet[2]){
+        case GATT_SERVICE_SUBEVENT_CYCLING_POWER_START_CALIBRATION:
+            printf("start calibration\n");
+            break;
+        default:
+            break;
+    }
+        
+    // uint8_t event = hci_event_packet_get_type(packet);
+}
 
 int btstack_main(void);
 int btstack_main(void){
@@ -311,8 +333,8 @@ int btstack_main(void){
     // feature_flags |= (1 << CP_FEATURE_FLAG_OFFSET_COMPENSATION_INDICATOR_SUPPORTED);
     // feature_flags |= (1 << CP_FEATURE_FLAG_OFFSET_COMPENSATION_SUPPORTED);
     
-    // feature_flags |= (1 << CP_FEATURE_FLAG_EXTREME_MAGNITUDES_SUPPORTED);
-    // feature_flags |= (CP_SENSOR_MEASUREMENT_CONTEXT_FORCE << CP_FEATURE_FLAG_SENSOR_MEASUREMENT_CONTEXT);
+    feature_flags |= (1 << CP_FEATURE_FLAG_EXTREME_MAGNITUDES_SUPPORTED);
+    feature_flags |= (CP_SENSOR_MEASUREMENT_CONTEXT_FORCE << CP_FEATURE_FLAG_SENSOR_MEASUREMENT_CONTEXT);
     // feature_flags |= (CP_SENSOR_MEASUREMENT_CONTEXT_TORQUE << CP_FEATURE_FLAG_SENSOR_MEASUREMENT_CONTEXT);
 
     // feature_flags |= (1 << CP_FEATURE_FLAG_INSTANTANEOUS_MEASUREMENT_DIRECTION_SUPPORTED);
@@ -322,7 +344,7 @@ int btstack_main(void){
     feature_flags |= (1 << CP_FEATURE_FLAG_CHAIN_WEIGHT_ADJUSTMENT_SUPPORTED);
     feature_flags |= (1 << CP_FEATURE_FLAG_SPAN_LENGTH_ADJUSTMENT_SUPPORTED);
     feature_flags |= (1 << CP_FEATURE_FLAG_FACTORY_CALIBRATION_DATE_SUPPORTED);
-    // feature_flags |= (1 << CP_FEATURE_FLAG_CHAIN_LENGTH_ADJUSTMENT_SUPPORTED);
+    feature_flags |= (1 << CP_FEATURE_FLAG_OFFSET_COMPENSATION_SUPPORTED);
     // feature_flags |= (1 << CP_FEATURE_FLAG_CHAIN_LENGTH_ADJUSTMENT_SUPPORTED);
 
 
@@ -330,6 +352,7 @@ int btstack_main(void){
 
     cycling_power_service_server_init(feature_flags, CP_PEDAL_POWER_BALANCE_REFERENCE_LEFT, CP_TORQUE_SOURCE_WHEEL, 
         &supported_sensor_locations[0], num_supported_sensor_locations, supported_sensor_locations[0]);
+    cycling_power_service_server_packet_handler(packet_handler);
 
     cycling_power_service_server_set_factory_calibration_date(calibration_date);
 

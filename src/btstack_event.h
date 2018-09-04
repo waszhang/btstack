@@ -6658,6 +6658,18 @@ static inline uint8_t hids_subevent_input_report_enable_get_enable(const uint8_t
     return event[5];
 }
 
+#ifdef ENABLE_BLE
+/**
+ * @brief Get field con_handle from event GATT_SERVICE_SUBEVENT_CYCLING_POWER_START_CALIBRATION
+ * @param event packet
+ * @return con_handle
+ * @note: btstack_type 2
+ */
+static inline uint16_t gatt_service_subevent_cycling_power_start_calibration_get_con_handle(const uint8_t * event){
+    return little_endian_read_16(event, 3);
+}
+#endif
+
 
 
 /* API_END */
