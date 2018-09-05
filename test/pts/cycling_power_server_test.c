@@ -72,6 +72,16 @@ static cycling_power_sensor_location_t supported_sensor_locations[] = {
 };
 static uint16_t num_supported_sensor_locations = 6;
 static gatt_date_time_t calibration_date = {2018, 1, 1, 13, 40, 50};
+static cycling_power_sensor_measurement_context_t measurement_type;
+static int enhanced_calibration = 0;
+static uint16_t manufacturer_company_id = 0xf0f0; //  SIG assigned numbers
+static uint8_t numb_manufacturer_specific_data = CYCLING_POWER_MANUFACTURER_SPECIFIC_DATA_MAX_SIZE;
+static uint8_t manufacturer_specific_data[] = { 
+    0x11, 0x11, 0x11, 0x11,
+    0x22, 0x22, 0x22, 0x22,
+    0x33, 0x33, 0x33, 0x33,
+    0x44, 0x44, 0x44, 0x44 
+};
 
 #ifdef HAVE_BTSTACK_STDIN
 static char * measurement_flag_str[] = {
@@ -186,6 +196,9 @@ static void show_usage(void){
     printf("x    - set top dead spot angle\n");
     printf("y    - set bottom dead spot angle\n");
     printf("R    - reset values\n");
+    printf("z    - stop calibration\n");
+    printf("Z    - incorrect calibration position\n");
+
     printf("\n");
     printf("Ctrl-c - exit\n");
     printf("---\n");
@@ -273,9 +286,37 @@ static void stdin_process(char cmd){
             printf("set bottom dead spot angle\n");
             cycling_power_service_server_set_bottom_dead_spot_angle(20); 
             break;
-        case 'z':
+        case 'z':{
             printf("stop calibration\n");
-            cycling_power_server_force_magnitude_calibration_done(force_magnitude_newton); 
+            uint16_t calibrated_value = 0;
+            switch (measurement_type){
+                case CP_SENSOR_MEASUREMENT_CONTEXT_FORCE:
+                    calibrated_value = force_magnitude_newton;
+                    break;
+                case CP_SENSOR_MEASUREMENT_CONTEXT_TORQUE:
+                    calibrated_value = torque_magnitude_newton_m;
+                    break;
+            }
+
+            if (enhanced_calibration){
+                printf(" enhanced calibration on\n");
+                cycling_power_server_enhanced_calibration_done(measurement_type, calibrated_value, 
+                    manufacturer_company_id, numb_manufacturer_specific_data, manufacturer_specific_data);
+            } else {
+                cycling_power_server_calibration_done(measurement_type, calibrated_value); 
+            }
+            break;
+        }
+        case 'Z':
+            printf("stop calibration, incorrect calibration position\n");
+            if (enhanced_calibration){
+                printf(" enhanced calibration on\n");
+                cycling_power_server_enhanced_calibration_done(measurement_type, CP_CALIBRATION_STATUS_INCORRECT_CALIBRATION_POSITION, 
+                    manufacturer_company_id, numb_manufacturer_specific_data, manufacturer_specific_data);
+            } else {
+                cycling_power_server_calibration_done(measurement_type, CP_CALIBRATION_STATUS_INCORRECT_CALIBRATION_POSITION); 
+            }
+
             break;
         case '\n':
         case '\r':
@@ -297,7 +338,9 @@ static void packet_handler (uint8_t packet_type, uint16_t channel, uint8_t *pack
 
     switch (packet[2]){
         case GATT_SERVICE_SUBEVENT_CYCLING_POWER_START_CALIBRATION:
-            printf("start calibration\n");
+            printf("received GATT_SERVICE_SUBEVENT_CYCLING_POWER_START_CALIBRATION\n");
+            measurement_type = gatt_service_subevent_cycling_power_start_calibration_get_measurement_type(packet);
+            enhanced_calibration =  gatt_service_subevent_cycling_power_start_calibration_get_is_enhanced(packet);
             break;
         default:
             break;
@@ -345,7 +388,7 @@ int btstack_main(void){
     feature_flags |= (1 << CP_FEATURE_FLAG_SPAN_LENGTH_ADJUSTMENT_SUPPORTED);
     feature_flags |= (1 << CP_FEATURE_FLAG_FACTORY_CALIBRATION_DATE_SUPPORTED);
     feature_flags |= (1 << CP_FEATURE_FLAG_OFFSET_COMPENSATION_SUPPORTED);
-    // feature_flags |= (1 << CP_FEATURE_FLAG_CHAIN_LENGTH_ADJUSTMENT_SUPPORTED);
+    feature_flags |= (1 << CP_FEATURE_FLAG_ENHANCED_OFFSET_COMPENSATION_SUPPORTED);
 
 
     printf(" num_supported_sensor_locations %lu\n", sizeof(num_supported_sensor_locations));

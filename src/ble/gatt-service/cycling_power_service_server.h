@@ -55,7 +55,8 @@ extern "C" {
 /* GATT_SERVICE_SERVER_END */
 
 /* API_START */
-
+#define CYCLING_POWER_MANUFACTURER_SPECIFIC_DATA_MAX_SIZE   16
+    
 typedef enum {
     CP_PEDAL_POWER_BALANCE_REFERENCE_UNKNOWN = 0,
     CP_PEDAL_POWER_BALANCE_REFERENCE_LEFT,
@@ -158,6 +159,10 @@ typedef enum {
     CP_FEATURE_FLAG_RESERVED = 22
 } cycling_power_feature_flag_t;
 
+typedef enum {
+    CP_CALIBRATION_STATUS_INCORRECT_CALIBRATION_POSITION = 0x01,  
+    CP_CALIBRATION_STATUS_MANUFACTURER_SPECIFIC_ERROR_FOLLOWS = 0xFF
+} cycling_power_calibration_status_t;
 
 
 /**
@@ -173,6 +178,9 @@ void cycling_power_service_server_init(uint32_t feature_flags,
  */
 void cycling_power_service_server_update_values(void);
 
+void cycling_power_server_enhanced_calibration_done(cycling_power_sensor_measurement_context_t measurement_type,  
+                uint16_t calibrated_value, uint16_t manufacturer_company_id, 
+                uint8_t num_manufacturer_specific_data, uint8_t * manufacturer_specific_data);
 
 /**
  * @brief Register callback for the calibration. 
@@ -180,8 +188,7 @@ void cycling_power_service_server_update_values(void);
  */
 void cycling_power_service_server_packet_handler(btstack_packet_handler_t callback);
 
-void cycling_power_server_force_magnitude_calibration_done(uint16_t calibrated_value);
-void cycling_power_server_tourque_magnitude_calibration_done(uint16_t calibrated_value);
+void  cycling_power_server_calibration_done(cycling_power_sensor_measurement_context_t measurement_type, uint16_t calibrated_value);
 
 int  cycling_power_service_server_set_factory_calibration_date(gatt_date_time_t date);
 void cycling_power_service_server_set_sampling_rate(uint8_t sampling_rate_hz);

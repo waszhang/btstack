@@ -157,10 +157,16 @@ typedef struct {
     uint16_t chain_length_mm;                           // resolution 1 mm
     uint16_t chain_weight_g;                            // resolution 1 gram
     uint16_t span_length_mm;                            // resolution 1 mm
+    
     gatt_date_time_t factory_calibration_date;
+    
     uint8_t  sampling_rate_hz;                          // resolution 1 Herz
+    
     int16_t  current_force_magnitude_newton;
     int16_t  current_torque_magnitude_newton_m;     // newton meters, resolution 1/32
+    uint16_t manufacturer_company_id;
+    uint8_t num_manufacturer_specific_data;
+    uint8_t * manufacturer_specific_data;
 
     // Cycling Power Vector
     uint16_t vector_value_handle;
@@ -456,8 +462,7 @@ static void cycling_power_service_response_can_send_now(void * context){
         return;
     }
     
-    printf("sizeof(cycling_power_sensor_location_t) %lu \n", sizeof(cycling_power_sensor_location_t));
-    uint8_t value[3 + 25];
+    uint8_t value[3 + btstack_max(CP_SENSOR_LOCATION_RESERVED, CYCLING_POWER_MANUFACTURER_SPECIFIC_DATA_MAX_SIZE + 5)];
     int pos = 0;
     value[pos++] = CP_OPCODE_RESPONSE_CODE;
     value[pos++] = instance->request_opcode;
@@ -500,16 +505,39 @@ static void cycling_power_service_response_can_send_now(void * context){
             value[pos++] = instance->sampling_rate_hz;
             break;
         case CP_OPCODE_START_OFFSET_COMPENSATION:
-            if (!has_feature(CP_FEATURE_FLAG_EXTREME_MAGNITUDES_SUPPORTED)) break;
-            // if (has_feature(CP_FEATURE_FLAG_SENSOR_MEASUREMENT_CONTEXT) == CP_SENSOR_MEASUREMENT_CONTEXT_FORCE) {
-            //     little_endian_store_16(value, pos, instance->);
-            // } else if (has_feature(CP_FEATURE_FLAG_SENSOR_MEASUREMENT_CONTEXT) == CP_SENSOR_MEASUREMENT_CONTEXT_TORQUE){
-            //     little_endian_store_16(value, pos, instance->);
-            // } else {
-            //     // 0xffff
-            // }
+        case CP_OPCODE_START_ENHANCED_OFFSET_COMPENSATION:{
+            uint16_t calibrated_value = 0xffff;
+            if (has_feature(CP_FEATURE_FLAG_EXTREME_MAGNITUDES_SUPPORTED)){
+                if (has_feature(CP_FEATURE_FLAG_SENSOR_MEASUREMENT_CONTEXT) == CP_SENSOR_MEASUREMENT_CONTEXT_FORCE) {
+                    calibrated_value = instance->current_force_magnitude_newton;
+                } else if (has_feature(CP_FEATURE_FLAG_SENSOR_MEASUREMENT_CONTEXT) == CP_SENSOR_MEASUREMENT_CONTEXT_TORQUE){
+                    calibrated_value = instance->current_torque_magnitude_newton_m;
+                }
+            }
+            
+            if (calibrated_value == CP_CALIBRATION_STATUS_INCORRECT_CALIBRATION_POSITION){
+                 value[pos++] = calibrated_value;
+                 // do not include manufacturer ID and data
+                 break;
+            } else if (calibrated_value == CP_CALIBRATION_STATUS_MANUFACTURER_SPECIFIC_ERROR_FOLLOWS){
+                value[pos++] = calibrated_value;
+            } else {
+                little_endian_store_16(value, pos, calibrated_value);
+                pos += 2;
+    
+            }
+            
+            if (instance->request_opcode == CP_OPCODE_START_OFFSET_COMPENSATION) break;
+            little_endian_store_16(value, pos, instance->manufacturer_company_id);
             pos += 2;
+            int data_len = instance->num_manufacturer_specific_data < CYCLING_POWER_MANUFACTURER_SPECIFIC_DATA_MAX_SIZE ? instance->num_manufacturer_specific_data : (CYCLING_POWER_MANUFACTURER_SPECIFIC_DATA_MAX_SIZE - 1);
+            value[pos++] = data_len;
+            memcpy(&value[pos], instance->manufacturer_specific_data, data_len);
+            pos += data_len;
+            value[pos++] = 0;
             break;
+        
+        }
         default:
             break;
     }
@@ -690,27 +718,29 @@ static int cycling_power_service_write_callback(hci_con_handle_t con_handle, uin
                 break;
 
             case CP_OPCODE_START_OFFSET_COMPENSATION:
+            case CP_OPCODE_START_ENHANCED_OFFSET_COMPENSATION:
                 if (!has_feature(CP_FEATURE_FLAG_OFFSET_COMPENSATION_SUPPORTED)) break;
                 if (has_feature(CP_FEATURE_FLAG_EXTREME_MAGNITUDES_SUPPORTED) && 
                         ((has_feature(CP_FEATURE_FLAG_SENSOR_MEASUREMENT_CONTEXT) == CP_SENSOR_MEASUREMENT_CONTEXT_FORCE) || 
                          (has_feature(CP_FEATURE_FLAG_SENSOR_MEASUREMENT_CONTEXT) == CP_SENSOR_MEASUREMENT_CONTEXT_TORQUE))
                 ){
-                    // start offset compensation procedure
-                    uint8_t event[3];
+                    printf("start offset compensation procedure, enhanced %d\n", (instance->request_opcode == CP_OPCODE_START_ENHANCED_OFFSET_COMPENSATION));
+                    uint8_t event[7];
                     int index = 0;
                     event[index++] = HCI_EVENT_GATT_SERVICE_META;
                     event[index++] = sizeof(event) - 2;
                     event[index++] = GATT_SERVICE_SUBEVENT_CYCLING_POWER_START_CALIBRATION;
                     little_endian_store_16(event, index, con_handle);
                     index += 2;
-
+                    event[index++] = has_feature(CP_FEATURE_FLAG_SENSOR_MEASUREMENT_CONTEXT) == CP_SENSOR_MEASUREMENT_CONTEXT_TORQUE;
+                    event[index++] = (instance->request_opcode == CP_OPCODE_START_ENHANCED_OFFSET_COMPENSATION);
                     instance->response_value = CP_RESPONSE_VALUE_W4_VALUE_AVAILABLE;
                     (*instance->calibration_callback)(HCI_EVENT_PACKET, 0, event, sizeof(event));
                     return 0;
                 }
                 instance->current_force_magnitude_newton = 0xffff;
                 instance->current_torque_magnitude_newton_m = 0xffff;
-                break;
+                break; 
             default:
                 break;
         }
@@ -1012,10 +1042,21 @@ void cycling_power_service_server_packet_handler(btstack_packet_handler_t callba
     instance->calibration_callback = callback;
 }
 
-void cycling_power_server_force_magnitude_calibration_done(uint16_t calibrated_value){
+void cycling_power_server_calibration_done(cycling_power_sensor_measurement_context_t measurement_type, uint16_t calibrated_value){
     cycling_power_t * instance = &cycling_power;
     if (instance->response_value != CP_RESPONSE_VALUE_W4_VALUE_AVAILABLE) return;
-    instance->current_force_magnitude_newton = calibrated_value;
+
+    switch (measurement_type){
+        case CP_SENSOR_MEASUREMENT_CONTEXT_FORCE:
+            printf("CP_SENSOR_MEASUREMENT_CONTEXT_FORCE \n");
+            instance->current_force_magnitude_newton = calibrated_value;
+            break;
+        case CP_SENSOR_MEASUREMENT_CONTEXT_TORQUE:
+            printf("CP_SENSOR_MEASUREMENT_CONTEXT_TORQUE \n");
+            instance->current_torque_magnitude_newton_m = calibrated_value;
+            break;
+    }
+    instance->request_opcode = CP_OPCODE_START_OFFSET_COMPENSATION;
     instance->response_value = CP_RESPONSE_VALUE_SUCCESS;
     if (instance->control_point_client_configuration_descriptor_indicate){
         instance->control_point_indicate_callback.callback = &cycling_power_service_response_can_send_now;
@@ -1024,15 +1065,39 @@ void cycling_power_server_force_magnitude_calibration_done(uint16_t calibrated_v
     }
 }
 
+void cycling_power_server_enhanced_calibration_done(cycling_power_sensor_measurement_context_t measurement_type,  
+                uint16_t calibrated_value, uint16_t manufacturer_company_id, 
+                uint8_t num_manufacturer_specific_data, uint8_t * manufacturer_specific_data){
 
-void cycling_power_server_tourque_magnitude_calibration_done(uint16_t calibrated_value){
     cycling_power_t * instance = &cycling_power;
     if (instance->response_value != CP_RESPONSE_VALUE_W4_VALUE_AVAILABLE) return;
-    instance->current_torque_magnitude_newton_m = calibrated_value;
-    instance->response_value = CP_RESPONSE_VALUE_SUCCESS;
+
+    switch (measurement_type){
+        case CP_SENSOR_MEASUREMENT_CONTEXT_FORCE:
+            instance->current_force_magnitude_newton = calibrated_value;
+            break;
+        case CP_SENSOR_MEASUREMENT_CONTEXT_TORQUE:
+            instance->current_torque_magnitude_newton_m = calibrated_value;
+            break;
+    }
+    instance->request_opcode = CP_OPCODE_START_ENHANCED_OFFSET_COMPENSATION;
+    instance->manufacturer_company_id = manufacturer_company_id;
+    instance->num_manufacturer_specific_data = num_manufacturer_specific_data;
+    instance->manufacturer_specific_data = manufacturer_specific_data;
+
+    switch (calibrated_value){
+        case CP_CALIBRATION_STATUS_INCORRECT_CALIBRATION_POSITION:
+        case CP_CALIBRATION_STATUS_MANUFACTURER_SPECIFIC_ERROR_FOLLOWS:
+            instance->response_value = CP_RESPONSE_VALUE_OPERATION_FAILED;
+            printf("CP_CALIBRATION_STATUS_INCORRECT_CALIBRATION_POSITION \n");
+            break;
+        default:
+            instance->response_value = CP_RESPONSE_VALUE_SUCCESS;
+            break;
+    }
     if (instance->control_point_client_configuration_descriptor_indicate){
         instance->control_point_indicate_callback.callback = &cycling_power_service_response_can_send_now;
         instance->control_point_indicate_callback.context  = (void*) instance;
         att_server_register_can_send_now_callback(&instance->control_point_indicate_callback, instance->con_handle);
-    }
+    }   
 }

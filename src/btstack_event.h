@@ -6668,6 +6668,24 @@ static inline uint8_t hids_subevent_input_report_enable_get_enable(const uint8_t
 static inline uint16_t gatt_service_subevent_cycling_power_start_calibration_get_con_handle(const uint8_t * event){
     return little_endian_read_16(event, 3);
 }
+/**
+ * @brief Get field measurement_type from event GATT_SERVICE_SUBEVENT_CYCLING_POWER_START_CALIBRATION
+ * @param event packet
+ * @return measurement_type
+ * @note: btstack_type 1
+ */
+static inline uint8_t gatt_service_subevent_cycling_power_start_calibration_get_measurement_type(const uint8_t * event){
+    return event[5];
+}
+/**
+ * @brief Get field is_enhanced from event GATT_SERVICE_SUBEVENT_CYCLING_POWER_START_CALIBRATION
+ * @param event packet
+ * @return is_enhanced
+ * @note: btstack_type 1
+ */
+static inline uint8_t gatt_service_subevent_cycling_power_start_calibration_get_is_enhanced(const uint8_t * event){
+    return event[6];
+}
 #endif
 
 

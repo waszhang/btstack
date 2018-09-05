@@ -2120,9 +2120,11 @@ typedef uint8_t sm_key_t[16];
 // GATT Service Meta event group
 
 /**
- * @format 12
+ * @format 1211
  * @param subevent_code
  * @param con_handle
+ * @param measurement_type  // 0 - force magnitude, 1 - torque magnitude, see cycling_power_sensor_measurement_context_t
+ * @param is_enhanced
 */
 #define GATT_SERVICE_SUBEVENT_CYCLING_POWER_START_CALIBRATION               0x01
 
