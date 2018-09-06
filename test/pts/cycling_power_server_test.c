@@ -156,10 +156,10 @@ static void dump_feature_flags(uint32_t feature_flags){
 static void dump_measurement_flags(uint16_t measurement_flags){
     int i;
     printf("measurement flags: \n");
-    for (i = 0; i < CP_MEASUREMENT_FLAG_RESERVED; i++){
-        printf("%02d ", i);
-    }
-    printf("\n");
+    // for (i = 0; i < CP_MEASUREMENT_FLAG_RESERVED; i++){
+    //     printf("%02d ", i);
+    // }
+    // printf("\n");
     for (i = 0; i < CP_MEASUREMENT_FLAG_RESERVED; i++){
         uint8_t value = (measurement_flags & (1 << i)) != 0;
         printf("%2d ", value);
@@ -367,12 +367,12 @@ int btstack_main(void){
 
     uint32_t feature_flags = 0;   
     feature_flags |= (1 << CP_FEATURE_FLAG_PEDAL_POWER_BALANCE_SUPPORTED);
-    // feature_flags |= (1 << CP_FEATURE_FLAG_ACCUMULATED_TORQUE_SUPPORTED);
+    feature_flags |= (1 << CP_FEATURE_FLAG_ACCUMULATED_TORQUE_SUPPORTED);
     // feature_flags |= (1 << CP_FEATURE_FLAG_WHEEL_REVOLUTION_DATA_SUPPORTED);
     // feature_flags |= (1 << CP_FEATURE_FLAG_CRANK_REVOLUTION_DATA_SUPPORTED);
-    // feature_flags |= (1 << CP_FEATURE_FLAG_EXTREME_ANGLES_SUPPORTED);
+    feature_flags |= (1 << CP_FEATURE_FLAG_EXTREME_ANGLES_SUPPORTED);
     // feature_flags |= (1 << CP_FEATURE_FLAG_TOP_AND_BOTTOM_DEAD_SPOT_ANGLE_SUPPORTED);
-    // feature_flags |= (1 << CP_FEATURE_FLAG_ACCUMULATED_ENERGY_SUPPORTED);
+    feature_flags |= (1 << CP_FEATURE_FLAG_ACCUMULATED_ENERGY_SUPPORTED);
     // feature_flags |= (1 << CP_FEATURE_FLAG_OFFSET_COMPENSATION_INDICATOR_SUPPORTED);
     // feature_flags |= (1 << CP_FEATURE_FLAG_OFFSET_COMPENSATION_SUPPORTED);
     
@@ -389,6 +389,7 @@ int btstack_main(void){
     feature_flags |= (1 << CP_FEATURE_FLAG_FACTORY_CALIBRATION_DATE_SUPPORTED);
     feature_flags |= (1 << CP_FEATURE_FLAG_OFFSET_COMPENSATION_SUPPORTED);
     feature_flags |= (1 << CP_FEATURE_FLAG_ENHANCED_OFFSET_COMPENSATION_SUPPORTED);
+    feature_flags |= (1 << CP_FEATURE_FLAG_CYCLING_POWER_MEASUREMENT_CHARACTERISTIC_CONTENT_MASKING_SUPPORTED);
 
 
     printf(" num_supported_sensor_locations %lu\n", sizeof(num_supported_sensor_locations));
@@ -402,7 +403,7 @@ int btstack_main(void){
     uint16_t measurement_flags = cycling_power_service_measurement_flags();
     dump_feature_flags(feature_flags);
     dump_measurement_flags(measurement_flags);
-    dump_measurement_flags_as_str(measurement_flags);
+    // dump_measurement_flags_as_str(measurement_flags);
 
     cycling_power_service_server_add_torque(100);
     cycling_power_service_server_add_torque(-100);

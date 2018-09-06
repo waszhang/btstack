@@ -53,6 +53,20 @@
 
 // error codes from cps spec
 #define CYCLING_POWER_ERROR_CODE_INAPPROPRIATE_CONNECTION_PARAMETERS    0x80
+#define CYCLING_POWER_MEASUREMENT_FLAGS_CLEARED                         0xFFFF
+
+typedef enum {
+    CP_MASK_BIT_PEDAL_POWER_BALANCE = 0,
+    CP_MASK_BIT_ACCUMULATED_TORQUE,
+    CP_MASK_BIT_WHEEL_REVOLUTION_DATA,
+    CP_MASK_BIT_CRANK_REVOLUTION_DATA,
+    CP_MASK_BIT_EXTREME_MAGNITUDES,
+    CP_MASK_BIT_EXTREME_ANGLES,
+    CP_MASK_BIT_TOP_DEAD_SPOT_ANGLE,
+    CP_MASK_BIT_BOTTOM_DEAD_SPOT_ANGLE,
+    CP_MASK_BIT_ACCUMULATED_ENERGY,
+    CP_MASK_BIT_RESERVED
+} cycling_power_mask_bit_t;
 
 typedef enum {
     CP_OPCODE_IDLE = 0,
@@ -147,7 +161,9 @@ typedef struct {
     // Cycling Power Feature
     uint16_t feature_value_handle;
     uint32_t feature_flags;                             // see cycling_power_feature_flag_t
-    
+    uint16_t masked_measurement_flags;
+    uint16_t default_measurement_flags;
+
     // Sensor Location
     uint16_t sensor_location_value_handle;
     cycling_power_sensor_location_t sensor_location;    // see cycling_power_sensor_location_t
@@ -262,7 +278,7 @@ static int cycling_power_vector_instantaneous_measurement_direction(void){
     return instance->vector_instantaneous_measurement_direction;
 }
 
-uint16_t cycling_power_service_measurement_flags(void){
+static uint16_t cycling_power_service_default_measurement_flags(void){
     cycling_power_t * instance = &cycling_power;
     uint16_t measurement_flags = 0;
     uint8_t flag[] = {
@@ -285,13 +301,26 @@ uint16_t cycling_power_service_measurement_flags(void){
     for (i = CP_MEASUREMENT_FLAG_PEDAL_POWER_BALANCE_PRESENT; i <= CP_MEASUREMENT_FLAG_OFFSET_COMPENSATION_INDICATOR; i++){
         measurement_flags |= flag[i] << i;
     }
- // printf("mes. flags:\n");
- // for (i = 0; i < CP_MEASUREMENT_FLAG_RESERVED; i++){
- //        uint8_t value = (measurement_flags & (1 << i)) != 0;
- //        printf("%2d ", value);
- //    }
- //    printf("\n");
+
+    printf("default_measurement_flags \n");
+    for (i = 0; i < CP_MEASUREMENT_FLAG_RESERVED; i++){
+        uint8_t v = (measurement_flags & (1 << i)) != 0;
+        printf("%2d ", v);
+    }
+    printf("\n");
+
     return measurement_flags;
+}
+
+uint16_t cycling_power_service_measurement_flags(void){
+    cycling_power_t * instance = &cycling_power;
+    if (instance->masked_measurement_flags != CYCLING_POWER_MEASUREMENT_FLAGS_CLEARED){
+        return instance->masked_measurement_flags;
+    } 
+    if (instance->default_measurement_flags == CYCLING_POWER_MEASUREMENT_FLAGS_CLEARED){
+        instance->default_measurement_flags = cycling_power_service_default_measurement_flags();
+    }
+    return instance->default_measurement_flags;
 }
 
 uint8_t cycling_power_service_vector_flags(void){
@@ -388,9 +417,8 @@ static void cycling_power_service_measurement_can_send_now(void * context){
     uint8_t value[50];
     uint16_t measurement_flags = cycling_power_service_measurement_flags();
     int pos = 4;
-    
     int i;
-    for (i = CP_MEASUREMENT_FLAG_PEDAL_POWER_BALANCE_PRESENT; i <= CP_MEASUREMENT_FLAG_OFFSET_COMPENSATION_INDICATOR; i++){
+    for (i = 0; i < CP_MEASUREMENT_FLAG_RESERVED; i++){
         // printf("measurement_flags 0x%02x, bit %d, has feature %d\n", measurement_flags, i, flag[i]);
         if ((measurement_flags & (1 << i)) == 0) continue;
         switch ((cycling_power_measurement_flag_t) i){
@@ -451,7 +479,7 @@ static void cycling_power_service_measurement_can_send_now(void * context){
     
     little_endian_store_16(value, 0, measurement_flags);
     little_endian_store_16(value, 2, instance->instantaneous_power_watt);
-    printf_hexdump(value, pos);
+    // printf_hexdump(value, pos);
     att_server_notify(instance->con_handle, instance->measurement_value_handle, &value[0], pos); 
 }
 
@@ -536,8 +564,9 @@ static void cycling_power_service_response_can_send_now(void * context){
             pos += data_len;
             value[pos++] = 0;
             break;
-        
         }
+        case CP_OPCODE_MASK_CYCLING_POWER_MEASUREMENT_CHARACTERISTIC_CONTENT:
+            break;
         default:
             break;
     }
@@ -719,7 +748,12 @@ static int cycling_power_service_write_callback(hci_con_handle_t con_handle, uin
 
             case CP_OPCODE_START_OFFSET_COMPENSATION:
             case CP_OPCODE_START_ENHANCED_OFFSET_COMPENSATION:
-                if (!has_feature(CP_FEATURE_FLAG_OFFSET_COMPENSATION_SUPPORTED)) break;
+                printf(" CP_OPCODE_START_OFFSET_COMPENSATION \n");
+                if (!has_feature(CP_FEATURE_FLAG_OFFSET_COMPENSATION_SUPPORTED)){
+                    instance->response_value = CP_RESPONSE_VALUE_INVALID_PARAMETER;
+                    break;  
+                } 
+                printf(" CP_OPCODE_START_OFFSET_COMPENSATION 1\n");
                 if (has_feature(CP_FEATURE_FLAG_EXTREME_MAGNITUDES_SUPPORTED) && 
                         ((has_feature(CP_FEATURE_FLAG_SENSOR_MEASUREMENT_CONTEXT) == CP_SENSOR_MEASUREMENT_CONTEXT_FORCE) || 
                          (has_feature(CP_FEATURE_FLAG_SENSOR_MEASUREMENT_CONTEXT) == CP_SENSOR_MEASUREMENT_CONTEXT_TORQUE))
@@ -741,13 +775,45 @@ static int cycling_power_service_write_callback(hci_con_handle_t con_handle, uin
                 instance->current_force_magnitude_newton = 0xffff;
                 instance->current_torque_magnitude_newton_m = 0xffff;
                 break; 
+
+            case CP_OPCODE_MASK_CYCLING_POWER_MEASUREMENT_CHARACTERISTIC_CONTENT:{
+                if (!has_feature(CP_FEATURE_FLAG_CYCLING_POWER_MEASUREMENT_CHARACTERISTIC_CONTENT_MASKING_SUPPORTED)) break;
+                uint16_t mask_bitmap = little_endian_read_16(buffer, pos);
+                uint16_t masked_measurement_flags = instance->default_measurement_flags;
+                uint16_t pos = 0;
+                
+                for (i = 0; i < CP_MASK_BIT_RESERVED; i++){
+                    uint8_t clear_bit = mask_bitmap & (1 << i) ? 1 : 0;
+                    
+                    masked_measurement_flags &= ~(clear_bit << pos);
+                    pos++;
+                    // following measurement flags have additional flag         
+                    switch ((cycling_power_mask_bit_t)i){
+                        case CP_MASK_BIT_PEDAL_POWER_BALANCE:
+                        case CP_MASK_BIT_ACCUMULATED_TORQUE:
+                        case CP_MASK_BIT_EXTREME_MAGNITUDES:
+                            masked_measurement_flags &= ~(clear_bit << pos);
+                            pos++;
+                            break;
+                        default:
+                            break;
+                    }
+                }
+                // printf("masked : ");
+                // for (i = 0; i < CP_MEASUREMENT_FLAG_RESERVED; i++){
+                //     uint8_t v = (instance->masked_measurement_flags & (1 << i)) != 0;
+                //     printf("%2d ", v);
+                // }
+                // printf("\n");
+
+                instance->masked_measurement_flags = masked_measurement_flags;
+                instance->response_value = CP_RESPONSE_VALUE_SUCCESS;
+                break;
+            }
             default:
                 break;
         }
         
-        // printf("opcode %02x, expected (%02x), has feature %d\n", instance->request_opcode, CP_OPCODE_SET_CUMULATIVE_VALUE, has_feature(CP_FEATURE_FLAG_WHEEL_REVOLUTION_DATA_SUPPORTED));
-        printf("control point, opcode %02x, response %02x\n", instance->request_opcode, instance->response_value);
-    
         if (instance->control_point_client_configuration_descriptor_indicate){
             instance->control_point_indicate_callback.callback = &cycling_power_service_response_can_send_now;
             instance->control_point_indicate_callback.context  = (void*) instance;
@@ -766,54 +832,54 @@ static void packet_handler (uint8_t packet_type, uint16_t channel, uint8_t *pack
     cycling_power_t * instance = &cycling_power;
     uint8_t event = hci_event_packet_get_type(packet);
 
-    switch (packet_type) {
-        case HCI_EVENT_PACKET:
-            switch (event){
-                case HCI_EVENT_LE_META:
-                    switch (hci_event_le_meta_get_subevent_code(packet)){
-                        case HCI_SUBEVENT_LE_CONNECTION_COMPLETE:
-                            instance->con_handle = hci_subevent_le_connection_complete_get_connection_handle(packet);
-                            // print connection parameters (without using float operations)
-                            instance->con_interval = hci_subevent_le_connection_complete_get_conn_interval(packet);
-                            printf("Initial Connection Interval: %u, %u.%02u ms\n", instance->con_interval, instance->con_interval * 125 / 100, 25 * (instance->con_interval & 3));
-                            printf("Initial Connection Latency: %u\n", hci_subevent_le_connection_complete_get_conn_latency(packet));
-                            instance->con_interval_status = CP_CONNECTION_INTERVAL_STATUS_RECEIVED;
-                            break;
-                        case HCI_SUBEVENT_LE_CONNECTION_UPDATE_COMPLETE:
-                            if (instance->con_interval_status != CP_CONNECTION_INTERVAL_STATUS_W4_UPDATE) return;
-                            
-                            if (instance->con_interval > instance->con_interval_max || instance->con_interval < instance->con_interval_min){
-                                instance->con_interval = hci_subevent_le_connection_update_complete_get_conn_interval(packet);
-                                printf("Updated Connection Interval: %u, %u.%02u ms\n", instance->con_interval, instance->con_interval * 125 / 100, 25 * (instance->con_interval & 3));
-                                printf("Updated Connection Latency: %u\n", hci_subevent_le_connection_update_complete_get_conn_latency(packet));  
-                                instance->con_interval_status = CP_CONNECTION_INTERVAL_STATUS_ACCEPTED;
-                            } else {
-                                instance->con_interval_status = CP_CONNECTION_INTERVAL_STATUS_REJECTED;
-                            }
-                            att_server_response_ready(l2cap_event_connection_parameter_update_response_get_handle(packet));
-                            break;
-                        default:
-                            break;
-                    }
+    if (packet_type != HCI_EVENT_PACKET) return;
+    switch (event){
+        case HCI_EVENT_LE_META:
+            switch (hci_event_le_meta_get_subevent_code(packet)){
+                case HCI_SUBEVENT_LE_CONNECTION_COMPLETE:
+                    instance->con_handle = hci_subevent_le_connection_complete_get_connection_handle(packet);
+                    // print connection parameters (without using float operations)
+                    instance->con_interval = hci_subevent_le_connection_complete_get_conn_interval(packet);
+                    printf("Initial Connection Interval: %u, %u.%02u ms\n", instance->con_interval, instance->con_interval * 125 / 100, 25 * (instance->con_interval & 3));
+                    printf("Initial Connection Latency: %u\n", hci_subevent_le_connection_complete_get_conn_latency(packet));
+                    instance->con_interval_status = CP_CONNECTION_INTERVAL_STATUS_RECEIVED;
                     break;
-                case L2CAP_EVENT_CONNECTION_PARAMETER_UPDATE_RESPONSE:
-                    if (instance->con_interval_status != CP_CONNECTION_INTERVAL_STATUS_W4_L2CAP_RESPONSE) return;
+                case HCI_SUBEVENT_LE_CONNECTION_UPDATE_COMPLETE:
+                    if (instance->con_interval_status != CP_CONNECTION_INTERVAL_STATUS_W4_UPDATE) return;
                     
-                    printf("L2CAP Connection Parameter Update Complete, response: %x\n", l2cap_event_connection_parameter_update_response_get_result(packet));
-                    if (l2cap_event_connection_parameter_update_response_get_result(packet) == ERROR_CODE_SUCCESS){
-                        instance->con_interval_status = CP_CONNECTION_INTERVAL_STATUS_W4_UPDATE;
+                    if (instance->con_interval > instance->con_interval_max || instance->con_interval < instance->con_interval_min){
+                        instance->con_interval = hci_subevent_le_connection_update_complete_get_conn_interval(packet);
+                        printf("Updated Connection Interval: %u, %u.%02u ms\n", instance->con_interval, instance->con_interval * 125 / 100, 25 * (instance->con_interval & 3));
+                        printf("Updated Connection Latency: %u\n", hci_subevent_le_connection_update_complete_get_conn_latency(packet));  
+                        instance->con_interval_status = CP_CONNECTION_INTERVAL_STATUS_ACCEPTED;
                     } else {
                         instance->con_interval_status = CP_CONNECTION_INTERVAL_STATUS_REJECTED;
-                        att_server_response_ready(l2cap_event_connection_parameter_update_response_get_handle(packet));
                     }
+                    att_server_response_ready(l2cap_event_connection_parameter_update_response_get_handle(packet));
                     break;
                 default:
                     break;
-             }
+            }
+            break;
+        case L2CAP_EVENT_CONNECTION_PARAMETER_UPDATE_RESPONSE:
+            if (instance->con_interval_status != CP_CONNECTION_INTERVAL_STATUS_W4_L2CAP_RESPONSE) return;
+            
+            printf("L2CAP Connection Parameter Update Complete, response: %x\n", l2cap_event_connection_parameter_update_response_get_result(packet));
+            if (l2cap_event_connection_parameter_update_response_get_result(packet) == ERROR_CODE_SUCCESS){
+                instance->con_interval_status = CP_CONNECTION_INTERVAL_STATUS_W4_UPDATE;
+            } else {
+                instance->con_interval_status = CP_CONNECTION_INTERVAL_STATUS_REJECTED;
+                att_server_response_ready(l2cap_event_connection_parameter_update_response_get_handle(packet));
+            }
+            break;
 
+        case HCI_EVENT_DISCONNECTION_COMPLETE:
+            printf("HCI_EVENT_DISCONNECTION_COMPLETE \n");
+            instance->masked_measurement_flags = CYCLING_POWER_MEASUREMENT_FLAGS_CLEARED;
+            break;
         default:
             break;
-    }
+     }
 }
 
 void cycling_power_service_server_init(uint32_t feature_flags, 
@@ -839,6 +905,8 @@ void cycling_power_service_server_init(uint32_t feature_flags,
     }
     
     instance->feature_flags = feature_flags;
+    instance->default_measurement_flags = CYCLING_POWER_MEASUREMENT_FLAGS_CLEARED;
+    instance->masked_measurement_flags  = CYCLING_POWER_MEASUREMENT_FLAGS_CLEARED;
     instance->pedal_power_balance_reference = reference;
     instance->torque_source = torque_source;
     printf("init with 0x%04x\n", instance->feature_flags);
@@ -1056,8 +1124,20 @@ void cycling_power_server_calibration_done(cycling_power_sensor_measurement_cont
             instance->current_torque_magnitude_newton_m = calibrated_value;
             break;
     }
-    instance->request_opcode = CP_OPCODE_START_OFFSET_COMPENSATION;
+    printf(" calibrated_value (0) %d\n", calibrated_value);
+    
     instance->response_value = CP_RESPONSE_VALUE_SUCCESS;
+    switch (calibrated_value){
+        case CP_CALIBRATION_STATUS_INCORRECT_CALIBRATION_POSITION:
+        case CP_CALIBRATION_STATUS_MANUFACTURER_SPECIFIC_ERROR_FOLLOWS:
+            instance->response_value = CP_RESPONSE_VALUE_OPERATION_FAILED;
+            printf("CP_CALIBRATION_STATUS_INCORRECT_CALIBRATION_POSITION \n");
+            instance->response_value = CP_RESPONSE_VALUE_OPERATION_FAILED;
+            break;
+        default:
+            break;
+    }
+    instance->request_opcode = CP_OPCODE_START_OFFSET_COMPENSATION;
     if (instance->control_point_client_configuration_descriptor_indicate){
         instance->control_point_indicate_callback.callback = &cycling_power_service_response_can_send_now;
         instance->control_point_indicate_callback.context  = (void*) instance;
@@ -1084,15 +1164,17 @@ void cycling_power_server_enhanced_calibration_done(cycling_power_sensor_measure
     instance->manufacturer_company_id = manufacturer_company_id;
     instance->num_manufacturer_specific_data = num_manufacturer_specific_data;
     instance->manufacturer_specific_data = manufacturer_specific_data;
-
+    instance->response_value = CP_RESPONSE_VALUE_SUCCESS;
+            
+    printf(" calibrated_value %d\n", calibrated_value);
     switch (calibrated_value){
         case CP_CALIBRATION_STATUS_INCORRECT_CALIBRATION_POSITION:
         case CP_CALIBRATION_STATUS_MANUFACTURER_SPECIFIC_ERROR_FOLLOWS:
             instance->response_value = CP_RESPONSE_VALUE_OPERATION_FAILED;
             printf("CP_CALIBRATION_STATUS_INCORRECT_CALIBRATION_POSITION \n");
+            instance->response_value = CP_RESPONSE_VALUE_OPERATION_FAILED;
             break;
         default:
-            instance->response_value = CP_RESPONSE_VALUE_SUCCESS;
             break;
     }
     if (instance->control_point_client_configuration_descriptor_indicate){
