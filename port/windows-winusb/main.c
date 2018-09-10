@@ -61,6 +61,9 @@
 #include "hci.h"
 #include "hci_dump.h"
 #include "btstack_stdin.h"
+#include "btstack_chipset_intel_firmware.h"
+
+#define TEST_USB
 
 int btstack_main(int argc, const char * argv[]);
 
@@ -153,6 +156,13 @@ int main(int argc, const char * argv[]){
     hci_dump_open(NULL, HCI_DUMP_STDOUT);
 #endif
 
+#ifdef TEST_USB
+    // setup USB Transport
+    const hci_transport_t * transport = hci_transport_usb_instance();
+    btstack_chipset_intel_download_firmware(transport, NULL);
+
+#else
+
     // init HCI
 	hci_init(hci_transport_usb_instance(), NULL);
 
@@ -169,6 +179,8 @@ int main(int argc, const char * argv[]){
 
     // setup app
     btstack_main(argc, argv);
+
+#endif
 
     // go
     btstack_run_loop_execute();    
