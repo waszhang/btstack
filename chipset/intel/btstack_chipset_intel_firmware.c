@@ -2,6 +2,7 @@
 
 #include <fcntl.h>
 #include <unistd.h>
+#include <stdio.h>
 
 #include "btstack_chipset_intel_firmware.h"
 #include "hci_cmd.h"
@@ -10,6 +11,7 @@
 #include "btstack_event.h"
 #include "btstack_debug.h"
 #include "btstack_util.h"
+#include "btstack_run_loop.h"
 
 const hci_transport_t * transport;
 
@@ -18,8 +20,10 @@ static int state = 0;
 static uint8_t hci_outgoing[300];
 static uint8_t fw_buffer[300];
 
-static int fw_fd;
+static FILE *   fw_file;
 static uint32_t fw_offset;
+
+static btstack_timer_source_t fw_timer;
 
 typedef struct {
     uint8_t status;
@@ -61,11 +65,32 @@ static const hci_cmd_t hci_intel_read_secure_boot_params = {
     0xfc0d, ""
 };
 
+static const uint8_t hci_intel_reset_param[] = { 
+    0x01, 0xfc, 0x08, /* acutal params*/ 0x00, 0x01, 0x00, 0x01, 0x00, 0x08, 0x04, 0x00
+};
+
+static const uint8_t intel_ibt_11_5_ddc_1[] = {
+    0x8b, 0xfc, 4, 0x03, 0x28, 0x01, 0x18,
+};
+static const uint8_t intel_ibt_11_5_ddc_2[] = {
+    0x8b, 0xfc, 5, 0x04, 0x42, 0x01, 0x45, 0x80
+};
+static const uint8_t intel_ibt_11_5_ddc_3[] = {
+    0x8b, 0xfc, 4, 0x03, 0x27, 0x01, 0x08
+};
+static const uint8_t intel_ibt_11_5_ddc_4[] = {
+    0x8b, 0xfc, 5,  0x04, 0x29, 0x01, 0x01, 0x00
+};
+
+static int transport_send_packet(uint8_t packet_type, const uint8_t * packet, uint16_t size){
+    hci_dump_packet(packet_type, 0, (uint8_t*) packet, size);
+    return transport->send_packet(packet_type, (uint8_t *) packet, size);
+}
+
 static int transport_send_cmd_va_arg(const hci_cmd_t *cmd, va_list argptr){
     uint8_t * packet = hci_outgoing;
     uint16_t size = hci_cmd_create_from_template(packet, cmd, argptr);
-    hci_dump_packet(HCI_COMMAND_DATA_PACKET, 0, packet, size);
-    return transport->send_packet(HCI_COMMAND_DATA_PACKET, packet, size);
+    return transport_send_packet(HCI_COMMAND_DATA_PACKET, packet, size);
 }
 
 static int transport_send_cmd(const hci_cmd_t *cmd, ...){
@@ -82,19 +107,24 @@ static int transport_send_intel_secure(uint8_t fragment_type, const uint8_t * da
     hci_outgoing[3] = fragment_type;
     memcpy(&hci_outgoing[4], data, len);
     uint16_t size = 3 +  1 + len;
-    hci_dump_packet(HCI_ACL_DATA_PACKET, 0, hci_outgoing, size);
-    return transport->send_packet(HCI_ACL_DATA_PACKET, hci_outgoing, size);
+    return transport_send_packet(HCI_ACL_DATA_PACKET, hci_outgoing, size);
 }
 
 static void state_machine(uint8_t * packet);
 
 // read data from fw file and send it via intel_secure + update state
 static int intel_send_fragment(uint8_t fragment_type, uint16_t len){
-    int res = read(fw_fd, fw_buffer, len);
+    int res = fread(fw_buffer, 1, len, fw_file);
     log_info("offset %6u, read %3u -> res %d", fw_offset, len, res);
     fw_offset += res;
     state++;
     return transport_send_intel_secure(fragment_type, fw_buffer, len);
+}
+
+static void fw_timer_handler(btstack_timer_source_t * ts){
+    (void) ts;
+    log_info("timer");
+    state_machine(NULL);
 }
 
 static void state_machine(uint8_t * packet){
@@ -154,8 +184,8 @@ static void state_machine(uint8_t * packet){
             log_info("Open firmware %s", fw_name);
 
             // open firmware file
-            fw_fd = open(fw_name, O_RDONLY);
-            if (fw_fd < 0){
+            fw_file = fopen(fw_name, "rb");
+            if (!fw_file){
                 log_error("can't open file %s", fw_name);
                 return;
             }
@@ -173,7 +203,7 @@ static void state_machine(uint8_t * packet){
             break;
         case 6:
             // skip 4 bytes
-            res = read(fw_fd, fw_buffer, 4);
+            res = fread(fw_buffer, 1, 4, fw_file);
             log_info("read res %d", res);
             fw_offset += res;
 
@@ -186,25 +216,66 @@ static void state_machine(uint8_t * packet){
             break;
         case 8:
             // send firmware chunks - offset 644
-            res = read(fw_fd, fw_buffer, 3);
-            log_info("read command, res %d", res);
-            if (res > 0 ){
-                int param_len = fw_buffer[2];
-                if (param_len){
-                    res = read(fw_fd, &fw_buffer[3], param_len);
-                }
-                transport_send_intel_secure(0x01, fw_buffer, param_len+3);
+            res = fread(fw_buffer, 1, 3, fw_file);
+            log_info("offset %6u, read %3u -> res %d", fw_offset, 3, res);
+            fw_offset += res;
+            if (res == 0 ){
+                // EOF
+                log_info("End of file");
+                fclose(fw_file);
+                fw_file = NULL;
+                state++;
                 break;
             }
+            int param_len = fw_buffer[2];
+            if (param_len){
+                res = fread(&fw_buffer[3], 1, param_len, fw_file);
+                fw_offset += res;
+            }
+            transport_send_intel_secure(0x01, fw_buffer, param_len+3);
+            break;
+        case 9:
+            // check result
+            if (packet[2] != 0x06) break;
+            printf("Firmware upload complete\n");
+            log_info("Vendor Event 0x06 - firmware complete");
+            state++;
+            transport_send_packet(HCI_ACL_DATA_PACKET, hci_intel_reset_param, sizeof(hci_intel_reset_param));
 
-            // EOF
-            /* fall through */
+            // use timer to trigger last command
+            fw_timer.process = &fw_timer_handler;
+            btstack_run_loop_set_timer(&fw_timer, 1000);
+            btstack_run_loop_add_timer(&fw_timer);
+            break;
+        case 10:
+            // transport->close();
+            // transport->open();
+            // check result
+            // if (packet[2] != 0x02) break;
+            // log_info("Vendor Event 0x02 - firmware operational");
+            // state++;
+            // transport_send_packet(HCI_COMMAND_DATA_PACKET, hci_intel_reset_param, sizeof(hci_intel_reset_param));
+
+            // TODO: read DDC from file
+
+            // load ddc
+            state++;
+            transport_send_packet(HCI_ACL_DATA_PACKET, intel_ibt_11_5_ddc_1, sizeof(intel_ibt_11_5_ddc_1));
+            break;
+        case 11:
+            state++;
+            transport_send_packet(HCI_ACL_DATA_PACKET, intel_ibt_11_5_ddc_1, sizeof(intel_ibt_11_5_ddc_2));
+            break;
+        case 12:
+            state++;
+            transport_send_packet(HCI_ACL_DATA_PACKET, intel_ibt_11_5_ddc_1, sizeof(intel_ibt_11_5_ddc_3));
+            break;
+        case 13:
+            state++;
+            transport_send_packet(HCI_ACL_DATA_PACKET, intel_ibt_11_5_ddc_1, sizeof(intel_ibt_11_5_ddc_4));
+            break;
 
         default:
-
-            state++;
-            log_info("End of file");
-            close(fw_fd);
             break;
     }    
 }
@@ -214,6 +285,7 @@ static void transport_packet_handler (uint8_t packet_type, uint8_t *packet, uint
     // if (packet_type != HCI_EVENT_PACKET) return;
     switch (hci_event_packet_get_type(packet)){
         case HCI_EVENT_COMMAND_COMPLETE:
+        case HCI_EVENT_VENDOR_SPECIFIC:
             state_machine(packet);
             break;
         default:
@@ -225,7 +297,6 @@ void btstack_chipset_intel_download_firmware(const hci_transport_t * hci_transpo
 	(void) done;
 
 	transport = hci_transport;;
-
     // transport->init(NULL);
     transport->register_packet_handler(&transport_packet_handler);
     transport->open();
