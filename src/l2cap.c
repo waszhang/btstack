@@ -2114,6 +2114,9 @@ static void l2cap_hci_event_handler(uint8_t packet_type, uint16_t cid, uint8_t *
                         break;
                 }
             }
+            // unblock 'can send now' if all ACL buffers in Bluetooth Controller have been used for the closed connection
+            l2cap_run();    // try sending signaling packets first
+            l2cap_notify_channel_can_send();
             break;
 #endif
 
