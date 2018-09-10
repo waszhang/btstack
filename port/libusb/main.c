@@ -63,6 +63,9 @@
 #include "btstack_stdin.h"
 #include "btstack_audio.h"
 #include "btstack_tlv_posix.h"
+#include "btstack_chipset_intel_firmware.h"
+
+#define TEST_USB
 
 #define TLV_DB_PATH_PREFIX "/tmp/btstack_"
 #define TLV_DB_PATH_POSTFIX ".tlv"
@@ -162,6 +165,13 @@ int main(int argc, const char * argv[]){
     printf("Packet Log: %s\n", pklg_path);
     hci_dump_open(pklg_path, HCI_DUMP_PACKETLOGGER);
 
+#ifdef TEST_USB
+    // setup USB Transport
+    const hci_transport_t * transport = hci_transport_usb_instance();
+    btstack_chipset_intel_download_firmware(transport, NULL);
+
+#else
+
     // init HCI
 	hci_init(hci_transport_usb_instance(), NULL);
 
@@ -182,6 +192,7 @@ int main(int argc, const char * argv[]){
 
     // setup app
     btstack_main(argc, argv);
+#endif
 
     // go
     btstack_run_loop_execute();    
