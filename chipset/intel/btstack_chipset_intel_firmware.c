@@ -83,7 +83,7 @@ static const uint8_t intel_ibt_11_5_ddc_4[] = {
 };
 
 static int transport_send_packet(uint8_t packet_type, const uint8_t * packet, uint16_t size){
-    hci_dump_packet(packet_type, 0, (uint8_t*) packet, size);
+    hci_dump_packet(HCI_COMMAND_DATA_PACKET, 0, (uint8_t*) packet, size);
     return transport->send_packet(packet_type, (uint8_t *) packet, size);
 }
 
@@ -134,6 +134,7 @@ static void state_machine(uint8_t * packet){
     bd_addr_t addr;
     char fw_name[30];
     int res;
+    uint16_t buffer_offset;
 
     switch (state){
         case 0:
@@ -216,23 +217,32 @@ static void state_machine(uint8_t * packet){
             break;
         case 8:
             // send firmware chunks - offset 644
-            res = fread(fw_buffer, 1, 3, fw_file);
-            log_info("offset %6u, read %3u -> res %d", fw_offset, 3, res);
-            fw_offset += res;
-            if (res == 0 ){
-                // EOF
-                log_info("End of file");
-                fclose(fw_file);
-                fw_file = NULL;
-                state++;
-                break;
-            }
-            int param_len = fw_buffer[2];
-            if (param_len){
-                res = fread(&fw_buffer[3], 1, param_len, fw_file);
+            // chunk len must be 4 byte aligned
+            // multiple commands can be combined
+            buffer_offset = 0;
+            do {
+                res = fread(&fw_buffer[buffer_offset], 1, 3, fw_file);
+                log_info("fw_offset %6u, buffer_offset %u, read %3u -> res %d", fw_offset, buffer_offset, 3, res);
                 fw_offset += res;
-            }
-            transport_send_intel_secure(0x01, fw_buffer, param_len+3);
+                if (res == 0 ){
+                    // EOF
+                    log_info("End of file");
+                    fclose(fw_file);
+                    fw_file = NULL;
+                    state++;
+                    break;
+                }
+                int param_len = fw_buffer[buffer_offset + 2];
+                buffer_offset += 3;
+                if (param_len){
+                    res = fread(&fw_buffer[buffer_offset], 1, param_len, fw_file);
+                    fw_offset     += res;
+                    buffer_offset += res; 
+                }
+            } while ((buffer_offset & 3) != 0);
+
+            if (buffer_offset == 0) break;
+            transport_send_intel_secure(0x01, fw_buffer, buffer_offset);
             break;
         case 9:
             // check result
@@ -281,7 +291,7 @@ static void state_machine(uint8_t * packet){
 }
 
 static void transport_packet_handler (uint8_t packet_type, uint8_t *packet, uint16_t size){
-    hci_dump_packet(packet_type, 1, packet, size);
+    hci_dump_packet(HCI_EVENT_PACKET, 1, packet, size);
     // if (packet_type != HCI_EVENT_PACKET) return;
     switch (hci_event_packet_get_type(packet)){
         case HCI_EVENT_COMMAND_COMPLETE:
