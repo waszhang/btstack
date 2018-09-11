@@ -2128,4 +2128,18 @@ typedef uint8_t sm_key_t[16];
 */
 #define GATT_SERVICE_SUBEVENT_CYCLING_POWER_START_CALIBRATION               0x01
 
+/**
+ * @format 12
+ * @param subevent_code
+ * @param con_handle
+*/
+#define GATT_SERVICE_SUBEVENT_CYCLING_POWER_BROADCAST_START                 0x02
+
+/**
+ * @format 12
+ * @param subevent_code
+ * @param con_handle
+*/
+#define GATT_SERVICE_SUBEVENT_CYCLING_POWER_BROADCAST_STOP                  0x03
+
 #endif

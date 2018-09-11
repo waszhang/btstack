@@ -48,12 +48,24 @@
 // https://www.bluetooth.com/specifications/gatt/viewer?attributeXmlFile=org.bluetooth.characteristic.gap.appearance.xml
 // cycling / cycling power sensor
 static const uint16_t appearance = (18 << 6) | 4;
+static uint16_t con_handle;
+
+static uint16_t event_time_s = 0;
+static uint16_t force_magnitude_newton = 0;
+static uint16_t torque_magnitude_newton_m = 0;
+static uint16_t angle_deg = 0;
+
+static uint8_t broadcast_adv[31];
+static uint16_t adv_int_min = 0x0030;
+static uint16_t adv_int_max = 0x0030;
+static btstack_packet_callback_registration_t hci_event_callback_registration;
+
 
 const uint8_t adv_data[] = {
     // Flags general discoverable, BR/EDR not supported
-    0x02, 0x01, 0x06, 
+    0x02, BLUETOOTH_DATA_TYPE_FLAGS, 0x06, 
     // Name
-    0x0E, 0x09, 'C', 'y', 'c', 'l', 'i', 'n', 'g', '_', 'P', 'o', 'w', 'e', 'r',
+    0x0E, BLUETOOTH_DATA_TYPE_COMPLETE_LOCAL_NAME, 'C', 'y', 'c', 'l', 'i', 'n', 'g', '_', 'P', 'o', 'w', 'e', 'r',
     // 16-bit Service UUIDs
     0x03, BLUETOOTH_DATA_TYPE_COMPLETE_LIST_OF_16_BIT_SERVICE_CLASS_UUIDS, ORG_BLUETOOTH_SERVICE_CYCLING_POWER & 0xff, ORG_BLUETOOTH_SERVICE_CYCLING_POWER >> 8,
     // Appearance
@@ -84,60 +96,60 @@ static uint8_t manufacturer_specific_data[] = {
 };
 
 #ifdef HAVE_BTSTACK_STDIN
-static char * measurement_flag_str[] = {
-    "1   Pedal Power Balance",
-    "2   Pedal Power Balance Reference", // Unknown/Left
-    "2   Accumulated Torque",            // Wheel Based/Crank
-    "2   Accumulated Torque Source",     // Wheel Based/Crank
-    "4 2 Wheel Revolution Data",
-    "2 2 Crank Revolution Data",
-    "2 2 Extreme Force Magnitudes",
-    "2 2 Extreme Torque Magnitudes",
-    "3   Extreme Angles",
-    "2   Top Dead Spot Angle",
-    "2   Bottom Dead Spot Angle",
-    "2   Accumulated Energy",
-    "Offset Compensation Indicator"
-};
+// static char * measurement_flag_str[] = {
+//     "1   Pedal Power Balance",
+//     "2   Pedal Power Balance Reference", // Unknown/Left
+//     "2   Accumulated Torque",            // Wheel Based/Crank
+//     "2   Accumulated Torque Source",     // Wheel Based/Crank
+//     "4 2 Wheel Revolution Data",
+//     "2 2 Crank Revolution Data",
+//     "2 2 Extreme Force Magnitudes",
+//     "2 2 Extreme Torque Magnitudes",
+//     "3   Extreme Angles",
+//     "2   Top Dead Spot Angle",
+//     "2   Bottom Dead Spot Angle",
+//     "2   Accumulated Energy",
+//     "Offset Compensation Indicator"
+// };
 
-static char buffer[80];
+// static char buffer[80];
 
-static char * measurement_flag2str(cycling_power_measurement_flag_t flag, uint8_t value){
-    if (flag >= CP_MEASUREMENT_FLAG_RESERVED) return "Reserved";
+// static char * measurement_flag2str(cycling_power_measurement_flag_t flag, uint8_t value){
+//     if (flag >= CP_MEASUREMENT_FLAG_RESERVED) return "Reserved";
 
-    strcpy(buffer, measurement_flag_str[flag]);
-    int pos = strlen(measurement_flag_str[flag]);
-    // printf(" copy %d\n", pos);
-    switch (flag){
-        case CP_MEASUREMENT_FLAG_PEDAL_POWER_BALANCE_REFERENCE:
-            if (value == 0){
-                strcpy(buffer + pos, ": Unknown");
-            } else {
-                strcpy(buffer + pos, ": Left");
-            }
-            break;
-        case CP_MEASUREMENT_FLAG_ACCUMULATED_TORQUE_PRESENT:
-            if (value == 0){
-                strcpy(buffer + pos, ": Wheel Based");
-            } else {
-                strcpy(buffer + pos, ": Crank Based");
-            }
-            break;
-        case CP_MEASUREMENT_FLAG_ACCUMULATED_TORQUE_SOURCE:
-            if (value == 0){
-                strcpy(buffer + pos, ": Wheel Based");
-            } else {
-                strcpy(buffer + pos, ": Crank Based");
-            }
-            break;
-        default:
-            if (value == 0){                                
-                strcpy(buffer + pos, ": NOT SUPPORTED");
-            }
-            break;
-    }
-    return &buffer[0];
-}
+//     strcpy(buffer, measurement_flag_str[flag]);
+//     int pos = strlen(measurement_flag_str[flag]);
+//     // printf(" copy %d\n", pos);
+//     switch (flag){
+//         case CP_MEASUREMENT_FLAG_PEDAL_POWER_BALANCE_REFERENCE:
+//             if (value == 0){
+//                 strcpy(buffer + pos, ": Unknown");
+//             } else {
+//                 strcpy(buffer + pos, ": Left");
+//             }
+//             break;
+//         case CP_MEASUREMENT_FLAG_ACCUMULATED_TORQUE_PRESENT:
+//             if (value == 0){
+//                 strcpy(buffer + pos, ": Wheel Based");
+//             } else {
+//                 strcpy(buffer + pos, ": Crank Based");
+//             }
+//             break;
+//         case CP_MEASUREMENT_FLAG_ACCUMULATED_TORQUE_SOURCE:
+//             if (value == 0){
+//                 strcpy(buffer + pos, ": Wheel Based");
+//             } else {
+//                 strcpy(buffer + pos, ": Crank Based");
+//             }
+//             break;
+//         default:
+//             if (value == 0){                                
+//                 strcpy(buffer + pos, ": NOT SUPPORTED");
+//             }
+//             break;
+//     }
+//     return &buffer[0];
+// }
 
 static void dump_feature_flags(uint32_t feature_flags){
     int i;
@@ -167,15 +179,6 @@ static void dump_measurement_flags(uint16_t measurement_flags){
     printf("\n");
 }
 
-static void dump_measurement_flags_as_str(uint16_t measurement_flags){
-    int i;
-    for (i = CP_MEASUREMENT_FLAG_PEDAL_POWER_BALANCE_PRESENT; i <= CP_MEASUREMENT_FLAG_OFFSET_COMPENSATION_INDICATOR; i++){
-        // printf("measurement_flags 0x%02x, bit %d, has feature %d\n", measurement_flags, i, flag[i]);
-        uint8_t value = (measurement_flags & (1 << i)) != 0;
-        printf("%s\n", measurement_flag2str(i, value));
-    }
-}
-
 static void show_usage(void){
     bd_addr_t      iut_address;
     gap_local_bd_addr(iut_address);
@@ -198,16 +201,13 @@ static void show_usage(void){
     printf("R    - reset values\n");
     printf("z    - stop calibration\n");
     printf("Z    - incorrect calibration position\n");
-
+    printf("Y    - Invalid param\n");
+    printf("X    - start calibration\n");
+    
     printf("\n");
     printf("Ctrl-c - exit\n");
     printf("---\n");
 }
-
-static uint16_t event_time_s = 0;
-static uint16_t force_magnitude_newton = 0;
-static uint16_t torque_magnitude_newton_m = 0;
-static uint16_t angle_deg = 0;
 
 static void cps_reset_values(void){
     event_time_s = 0;
@@ -216,24 +216,25 @@ static void cps_reset_values(void){
     angle_deg = 0;
 }
 
-static void stdin_process(char cmd){
 
+
+static void stdin_process(char cmd){
     switch (cmd){
-        case 'R':
+        case 'C':
             printf("reset all values\n");
             cps_reset_values();
             break;
-        case 'u':
+        case 'u':{
             printf("push update\n");
             cycling_power_service_server_update_values();
             event_time_s++;
             break;
-    
-        case 't':
+        }
+        case 'r':
             printf("add positive torque\n");
             cycling_power_service_server_add_torque(100);
             break;
-        case 'T':
+        case 'R':
             printf("add negative torque\n");
             cycling_power_service_server_add_torque(-100);
             break;
@@ -286,15 +287,27 @@ static void stdin_process(char cmd){
             printf("set bottom dead spot angle\n");
             cycling_power_service_server_set_bottom_dead_spot_angle(20); 
             break;
+        case 'Y':
+            printf("Invalid parameter\n");
+            uint16_t calibrated_value = 0;
+            if (enhanced_calibration){
+                cycling_power_server_enhanced_calibration_done(3, calibrated_value, 
+                    manufacturer_company_id, numb_manufacturer_specific_data, manufacturer_specific_data);
+            } else {
+                cycling_power_server_calibration_done(2, calibrated_value); 
+            }
+            break;
         case 'z':{
             printf("stop calibration\n");
-            uint16_t calibrated_value = 0;
             switch (measurement_type){
                 case CP_SENSOR_MEASUREMENT_CONTEXT_FORCE:
                     calibrated_value = force_magnitude_newton;
                     break;
                 case CP_SENSOR_MEASUREMENT_CONTEXT_TORQUE:
                     calibrated_value = torque_magnitude_newton_m;
+                    break;
+                default:
+                    printf("wrong measurement type\n");
                     break;
             }
 
@@ -303,6 +316,7 @@ static void stdin_process(char cmd){
                 cycling_power_server_enhanced_calibration_done(measurement_type, calibrated_value, 
                     manufacturer_company_id, numb_manufacturer_specific_data, manufacturer_specific_data);
             } else {
+                // printf("cycling_power_server_calibration_done, data %d \n", calibrated_value);
                 cycling_power_server_calibration_done(measurement_type, calibrated_value); 
             }
             break;
@@ -318,6 +332,11 @@ static void stdin_process(char cmd){
             }
 
             break;
+        case 't':
+            printf("disconnect \n");
+            // gap_advertisements_enable(0);
+            gap_disconnect(con_handle);
+            break;
         case '\n':
         case '\r':
             break;
@@ -332,15 +351,46 @@ static void stdin_process(char cmd){
 static void packet_handler (uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size){
     UNUSED(channel);
     UNUSED(size);
-
+    int pos;
+    bd_addr_t null_addr;
+    
     if (packet_type != HCI_EVENT_PACKET) return;
-    if (hci_event_packet_get_type(packet) != HCI_EVENT_GATT_SERVICE_META) return;
+ 
+    switch (hci_event_packet_get_type(packet)){
+        case HCI_EVENT_LE_META:
+            switch (hci_event_le_meta_get_subevent_code(packet)){
+                case HCI_SUBEVENT_LE_CONNECTION_COMPLETE:
+                    con_handle = hci_subevent_le_connection_complete_get_connection_handle(packet);
+                    break;
+                default:
+                    break;
+            }
+            break;
 
-    switch (packet[2]){
-        case GATT_SERVICE_SUBEVENT_CYCLING_POWER_START_CALIBRATION:
-            printf("received GATT_SERVICE_SUBEVENT_CYCLING_POWER_START_CALIBRATION\n");
-            measurement_type = gatt_service_subevent_cycling_power_start_calibration_get_measurement_type(packet);
-            enhanced_calibration =  gatt_service_subevent_cycling_power_start_calibration_get_is_enhanced(packet);
+        case HCI_EVENT_GATT_SERVICE_META:
+            switch (packet[2]){
+                case GATT_SERVICE_SUBEVENT_CYCLING_POWER_START_CALIBRATION:
+                    measurement_type = gatt_service_subevent_cycling_power_start_calibration_get_measurement_type(packet);
+                    enhanced_calibration =  gatt_service_subevent_cycling_power_start_calibration_get_is_enhanced(packet);
+                    break;
+
+                case GATT_SERVICE_SUBEVENT_CYCLING_POWER_BROADCAST_START:
+                    printf("start broadcast\n");
+                    // set ADV_NONCONN_IND
+                    pos = cycling_power_get_measurement_adv(adv_int_max, &broadcast_adv[0], sizeof(broadcast_adv));
+                    memset(null_addr, 0, 6);
+                    gap_advertisements_set_params(adv_int_min, adv_int_max, 0x03, 0, null_addr, 0x07, 0x00);
+                    gap_advertisements_set_data(pos, (uint8_t*) broadcast_adv);
+                    gap_advertisements_enable(1);
+                    break;
+                case GATT_SERVICE_SUBEVENT_CYCLING_POWER_BROADCAST_STOP:
+                    printf("stop broadcast\n");
+                    gap_advertisements_enable(0);
+                    break;
+
+                default:
+                    break;
+            }
             break;
         default:
             break;
@@ -351,6 +401,9 @@ static void packet_handler (uint8_t packet_type, uint16_t channel, uint8_t *pack
 
 int btstack_main(void);
 int btstack_main(void){
+    hci_event_callback_registration.callback = &packet_handler;
+    hci_add_event_handler(&hci_event_callback_registration);
+
     l2cap_init();
 
     // setup le device db
@@ -425,14 +478,12 @@ int btstack_main(void){
     int16_t values[] = {12, -50, 100};
     cycling_power_service_server_set_torque_magnitude_values(3, values);
     cycling_power_service_server_set_force_magnitude_values(3, values);
-    uint16_t first_crank_measurement_angle_deg = 90;
     cycling_power_service_server_set_instantaneous_measurement_direction(CP_INSTANTANEOUS_MEASUREMENT_DIRECTION_TANGENTIAL_COMPONENT);
     // cycling_power_service_server_set_first_crank_measurement_angle(first_crank_measurement_angle_deg);
 
     // setup advertisements
-    uint16_t adv_int_min = 0x0030;
-    uint16_t adv_int_max = 0x0030;
-    uint8_t adv_type = 0;
+
+    uint8_t adv_type = 0;   // AFV_IND
     bd_addr_t null_addr;
     memset(null_addr, 0, 6);
     gap_advertisements_set_params(adv_int_min, adv_int_max, adv_type, 0, null_addr, 0x07, 0x00);

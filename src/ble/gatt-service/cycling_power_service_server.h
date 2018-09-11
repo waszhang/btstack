@@ -56,7 +56,7 @@ extern "C" {
 
 /* API_START */
 #define CYCLING_POWER_MANUFACTURER_SPECIFIC_DATA_MAX_SIZE   16
-    
+
 typedef enum {
     CP_PEDAL_POWER_BALANCE_REFERENCE_UNKNOWN = 0,
     CP_PEDAL_POWER_BALANCE_REFERENCE_LEFT,
@@ -182,6 +182,7 @@ void cycling_power_server_enhanced_calibration_done(cycling_power_sensor_measure
                 uint16_t calibrated_value, uint16_t manufacturer_company_id, 
                 uint8_t num_manufacturer_specific_data, uint8_t * manufacturer_specific_data);
 
+int cycling_power_get_measurement_adv(uint16_t adv_interval, uint8_t * value, uint16_t max_value_size);
 /**
  * @brief Register callback for the calibration. 
  * @param callback
