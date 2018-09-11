@@ -161,7 +161,7 @@ static void state_machine(uint8_t * packet){
             // only supported hw_platform = 0x37
             // only supported hw_variant  = 0x0b
             // fw_variant = 0x06 bootloader mode / 0x23 operational mode
-            if (version->fw_variant != 0x06) break;
+            // if (version->fw_variant != 0x06) break;
             // Read Intel Secure Boot Params
             transport_send_cmd(&hci_intel_read_secure_boot_params);
             state++;
@@ -274,15 +274,15 @@ static void state_machine(uint8_t * packet){
             break;
         case 11:
             state++;
-            transport_send_packet(HCI_ACL_DATA_PACKET, intel_ibt_11_5_ddc_1, sizeof(intel_ibt_11_5_ddc_2));
+            transport_send_packet(HCI_ACL_DATA_PACKET, intel_ibt_11_5_ddc_2, sizeof(intel_ibt_11_5_ddc_2));
             break;
         case 12:
             state++;
-            transport_send_packet(HCI_ACL_DATA_PACKET, intel_ibt_11_5_ddc_1, sizeof(intel_ibt_11_5_ddc_3));
+            transport_send_packet(HCI_ACL_DATA_PACKET, intel_ibt_11_5_ddc_3, sizeof(intel_ibt_11_5_ddc_3));
             break;
         case 13:
             state++;
-            transport_send_packet(HCI_ACL_DATA_PACKET, intel_ibt_11_5_ddc_1, sizeof(intel_ibt_11_5_ddc_4));
+            transport_send_packet(HCI_ACL_DATA_PACKET, intel_ibt_11_5_ddc_4, sizeof(intel_ibt_11_5_ddc_4));
             break;
 
         default:
