@@ -20,6 +20,8 @@ static int state = 0;
 static uint8_t hci_outgoing[300];
 static uint8_t fw_buffer[300];
 
+static uint8_t hw_variant;
+
 static FILE *   fw_file;
 static uint32_t fw_offset;
 
@@ -160,6 +162,7 @@ static void state_machine(uint8_t * packet){
             log_info("fw_patch_num 0x%02x", version->fw_patch_num);
             // only supported hw_platform = 0x37
             // only supported hw_variant  = 0x0b
+            hw_variant = version->hw_variant;
             // fw_variant = 0x06 bootloader mode / 0x23 operational mode
             // if (version->fw_variant != 0x06) break;
             // Read Intel Secure Boot Params
@@ -181,7 +184,7 @@ static void state_machine(uint8_t * packet){
             if (boot_params->limited_cce != 0) break;
 
             // firmware file
-            snprintf(fw_name, sizeof(fw_name), "ibt-11-%u.sfi", dev_revid);
+            snprintf(fw_name, sizeof(fw_name), "ibt-%u-%u.sfi", hw_variant, dev_revid);
             log_info("Open firmware %s", fw_name);
 
             // open firmware file
