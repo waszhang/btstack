@@ -13,19 +13,7 @@
 #include "btstack_util.h"
 #include "btstack_run_loop.h"
 
-const hci_transport_t * transport;
-
-static int state = 0;
-
-static uint8_t hci_outgoing[300];
-static uint8_t fw_buffer[300];
-
-static uint8_t hw_variant;
-
-static FILE *   fw_file;
-static uint32_t fw_offset;
-
-static btstack_timer_source_t fw_timer;
+// Vendor specific structs
 
 typedef struct {
     uint8_t status;
@@ -60,6 +48,8 @@ typedef struct {
     uint8_t     unlocked_state;
 } intel_boot_params_t;
 
+// Vendor sepcific commands
+
 static const hci_cmd_t hci_intel_read_version = {
     0xfc05, ""
 };
@@ -67,22 +57,36 @@ static const hci_cmd_t hci_intel_read_secure_boot_params = {
     0xfc0d, ""
 };
 
-static const uint8_t hci_intel_reset_param[] = { 
-    0x01, 0xfc, 0x08, /* acutal params*/ 0x00, 0x01, 0x00, 0x01, 0x00, 0x08, 0x04, 0x00
+static const hci_cmd_t hci_intel_reset_param = {
+    0xfc01, "11111111"
 };
 
-static const uint8_t intel_ibt_11_5_ddc_1[] = {
-    0x8b, 0xfc, 4, 0x03, 0x28, 0x01, 0x18,
+static const hci_cmd_t hci_intel_set_event_mask = {
+    0xfc52, "11111111"    
 };
-static const uint8_t intel_ibt_11_5_ddc_2[] = {
-    0x8b, 0xfc, 5, 0x04, 0x42, 0x01, 0x45, 0x80
+
+static const hci_cmd_t hci_intel_fc9f = {
+    0xfc9f, "1"    
 };
-static const uint8_t intel_ibt_11_5_ddc_3[] = {
-    0x8b, 0xfc, 4, 0x03, 0x27, 0x01, 0x08
-};
-static const uint8_t intel_ibt_11_5_ddc_4[] = {
-    0x8b, 0xfc, 5,  0x04, 0x29, 0x01, 0x01, 0x00
-};
+
+// state
+
+const hci_transport_t * transport;
+
+static int state = 0;
+
+static uint8_t hci_outgoing[300];
+static uint8_t fw_buffer[300];
+
+static uint8_t  hw_variant;
+static uint16_t dev_revid;
+
+static FILE *   fw_file;
+static uint32_t fw_offset;
+
+static void (*done)(int result);
+
+// functions
 
 static int transport_send_packet(uint8_t packet_type, const uint8_t * packet, uint16_t size){
     hci_dump_packet(HCI_COMMAND_DATA_PACKET, 0, (uint8_t*) packet, size);
@@ -112,6 +116,14 @@ static int transport_send_intel_secure(uint8_t fragment_type, const uint8_t * da
     return transport_send_packet(HCI_ACL_DATA_PACKET, hci_outgoing, size);
 }
 
+static int transport_send_intel_ddc(const uint8_t * data, uint16_t len){
+    little_endian_store_16(hci_outgoing, 0, 0xfc8b);
+    hci_outgoing[2] = len;
+    memcpy(&hci_outgoing[3], data, len);
+    uint16_t size = 3 +  len;
+    return transport_send_packet(HCI_COMMAND_DATA_PACKET, hci_outgoing, size);
+}
+
 static void state_machine(uint8_t * packet);
 
 // read data from fw file and send it via intel_secure + update state
@@ -123,64 +135,93 @@ static int intel_send_fragment(uint8_t fragment_type, uint16_t len){
     return transport_send_intel_secure(fragment_type, fw_buffer, len);
 }
 
-static void fw_timer_handler(btstack_timer_source_t * ts){
-    (void) ts;
-    log_info("timer");
-    state_machine(NULL);
+// read data from  ddc file and send iva intel ddc command
+// @returns -1 on eof
+static int intel_send_ddc(void){
+    int res;
+    // read len
+    res = fread(fw_buffer, 1, 1, fw_file);
+    log_info("offset %6u, read 1 -> res %d", fw_offset, 1, res);
+    if (res == 0) return -1;
+    uint8_t len = fw_buffer[0];
+    fw_offset += 1;
+    res = fread(&fw_buffer[1], 1, len, fw_file);
+    log_info("offset %6u, read %u -> res %d", fw_offset, 1, res);
+    return transport_send_intel_ddc(fw_buffer, 1 + len);
+}
+
+static void dump_intel_version(intel_version_t     * version){
+    log_info("status       0x%02x", version->status);
+    log_info("hw_platform  0x%02x", version->hw_platform);
+    log_info("hw_variant   0x%02x", version->hw_variant);
+    log_info("hw_revision  0x%02x", version->hw_revision);
+    log_info("fw_variant   0x%02x", version->fw_variant);
+    log_info("fw_revision  0x%02x", version->fw_revision);
+    log_info("fw_build_num 0x%02x", version->fw_build_num);
+    log_info("fw_build_ww  0x%02x", version->fw_build_ww);
+    log_info("fw_build_yy  0x%02x", version->fw_build_yy);
+    log_info("fw_patch_num 0x%02x", version->fw_patch_num);
+}
+
+static void dump_intel_boot_params(intel_boot_params_t * boot_params){
+    bd_addr_t addr;
+    reverse_bd_addr(boot_params->otp_bdaddr, addr);
+    log_info("Device revision: %u", dev_revid);
+    log_info("Secure Boot:  %s", boot_params->secure_boot ? "enabled" : "disabled");
+    log_info("OTP lock:     %s", boot_params->otp_lock    ? "enabled" : "disabled");
+    log_info("API lock:     %s", boot_params->api_lock    ? "enabled" : "disabled");
+    log_info("Debug lock:   %s", boot_params->debug_lock  ? "enabled" : "disabled");
+    log_info("Minimum firmware build %u week %u %u", boot_params->min_fw_build_nn, boot_params->min_fw_build_cw, 2000 + boot_params->min_fw_build_yy);
+    log_info("OTC BD_ADDR:  %s", bd_addr_to_str(addr));
 }
 
 static void state_machine(uint8_t * packet){
     intel_version_t     * version;
     intel_boot_params_t * boot_params;
-    uint16_t dev_revid;
-    bd_addr_t addr;
     char fw_name[30];
     int res;
     uint16_t buffer_offset;
+    bd_addr_t addr;
 
     switch (state){
         case 0:
-            transport_send_cmd(&hci_reset);
             state++;
+            transport_send_cmd(&hci_reset);
             break;
         case 1:
             // Read Intel Version
-            transport_send_cmd(&hci_intel_read_version);
             state++;
+            transport_send_cmd(&hci_intel_read_version);
             break;
         case 2:
             version = (intel_version_t*) hci_event_command_complete_get_return_parameters(packet);
-            log_info("status       0x%02x", version->status);
-            log_info("hw_platform  0x%02x", version->hw_platform);
-            log_info("hw_variant   0x%02x", version->hw_variant);
-            log_info("hw_revision  0x%02x", version->hw_revision);
-            log_info("fw_variant   0x%02x", version->fw_variant);
-            log_info("fw_revision  0x%02x", version->fw_revision);
-            log_info("fw_build_num 0x%02x", version->fw_build_num);
-            log_info("fw_build_ww  0x%02x", version->fw_build_ww);
-            log_info("fw_build_yy  0x%02x", version->fw_build_yy);
-            log_info("fw_patch_num 0x%02x", version->fw_patch_num);
-            // only supported hw_platform = 0x37
-            // only supported hw_variant  = 0x0b
+            dump_intel_version(version);
+
             hw_variant = version->hw_variant;
+
             // fw_variant = 0x06 bootloader mode / 0x23 operational mode
-            // if (version->fw_variant != 0x06) break;
+            if (version->fw_variant == 0x23) {
+                (*done)(0);
+                break;
+            }
+
+            if (version->fw_variant != 0x06){
+                log_error("unknown fw_variant 0x%02x", version->fw_variant);
+                break;
+            }
+
             // Read Intel Secure Boot Params
-            transport_send_cmd(&hci_intel_read_secure_boot_params);
             state++;
+            transport_send_cmd(&hci_intel_read_secure_boot_params);
             break;
         case 3:
             boot_params = (intel_boot_params_t *) hci_event_command_complete_get_return_parameters(packet);
-            dev_revid = little_endian_read_16((uint8_t*)&boot_params->dev_revid, 0);
+            dump_intel_boot_params(boot_params);
+
             reverse_bd_addr(boot_params->otp_bdaddr, addr);
-            log_info("Device revision: %u", dev_revid);
-            log_info("Secure Boot:  %s", boot_params->secure_boot ? "enabled" : "disabled");
-            log_info("OTP lock:     %s", boot_params->otp_lock    ? "enabled" : "disabled");
-            log_info("API lock:     %s", boot_params->api_lock    ? "enabled" : "disabled");
-            log_info("Debug lock:   %s", boot_params->debug_lock  ? "enabled" : "disabled");
-            log_info("Minimum firmware build %u week %u %u", boot_params->min_fw_build_nn, boot_params->min_fw_build_cw, 2000 + boot_params->min_fw_build_yy);
-            log_info("OTC BD_ADDR:  %s", bd_addr_to_str(addr));
-            // commmmand complete is required 
+            dev_revid = little_endian_read_16((uint8_t*)&boot_params->dev_revid, 0);
+
+            // assert commmand complete is required 
             if (boot_params->limited_cce != 0) break;
 
             // firmware file
@@ -188,9 +229,11 @@ static void state_machine(uint8_t * packet){
             log_info("Open firmware %s", fw_name);
 
             // open firmware file
+            fw_offset = 0;
             fw_file = fopen(fw_name, "rb");
             if (!fw_file){
                 log_error("can't open file %s", fw_name);
+                (*done)(1);
                 return;
             }
 
@@ -248,44 +291,75 @@ static void state_machine(uint8_t * packet){
             transport_send_intel_secure(0x01, fw_buffer, buffer_offset);
             break;
         case 9:
-            // check result
+            // expect Vendor Specific Event
+            if (packet[0] != 0xff) break;
             if (packet[2] != 0x06) break;
+
             printf("Firmware upload complete\n");
             log_info("Vendor Event 0x06 - firmware complete");
+
+            // Reset Params - constants from Windows Intel driver
             state++;
-            transport_send_packet(HCI_ACL_DATA_PACKET, hci_intel_reset_param, sizeof(hci_intel_reset_param));
-
-            // use timer to trigger last command
-            fw_timer.process = &fw_timer_handler;
-            btstack_run_loop_set_timer(&fw_timer, 1000);
-            btstack_run_loop_add_timer(&fw_timer);
+            transport_send_cmd(&hci_intel_reset_param, 0x00, 0x00, 0x00, 0x01, 0x00, 0x08, 0x04, 0x00);
             break;
-        case 10:
-            // transport->close();
-            // transport->open();
-            // check result
-            // if (packet[2] != 0x02) break;
-            // log_info("Vendor Event 0x02 - firmware operational");
-            // state++;
-            // transport_send_packet(HCI_COMMAND_DATA_PACKET, hci_intel_reset_param, sizeof(hci_intel_reset_param));
 
-            // TODO: read DDC from file
+        case 10:
+            if (packet[0] != 0xff) break;
+            if (packet[2] != 0x02) break;
+
+            printf("Firmware operational\n");
+            log_info("Vendor Event 0x02 - firmware operational");
+
+            // Read Intel Version
+            state++;
+            transport_send_cmd(&hci_intel_read_version);
+            break;
+
+        case 11:
+            version = (intel_version_t*) hci_event_command_complete_get_return_parameters(packet);
+            dump_intel_version(version);
+
+            // ddc config
+            snprintf(fw_name, sizeof(fw_name), "ibt-%u-%u.ddc", hw_variant, dev_revid);
+            log_info("Open DDC %s", fw_name);
+
+            // open ddc file
+            fw_offset = 0;
+            fw_file = fopen(fw_name, "rb");
+            if (!fw_file){
+                log_error("can't open file %s", fw_name);
+
+                (*done)(1);
+                return;
+            }
 
             // load ddc
             state++;
-            transport_send_packet(HCI_ACL_DATA_PACKET, intel_ibt_11_5_ddc_1, sizeof(intel_ibt_11_5_ddc_1));
-            break;
-        case 11:
-            state++;
-            transport_send_packet(HCI_ACL_DATA_PACKET, intel_ibt_11_5_ddc_2, sizeof(intel_ibt_11_5_ddc_2));
-            break;
+            
+            /* fall through */
+
         case 12:
+            res = intel_send_ddc();
+            if (res == 0) break;
+
+            // DDC download complete
             state++;
-            transport_send_packet(HCI_ACL_DATA_PACKET, intel_ibt_11_5_ddc_3, sizeof(intel_ibt_11_5_ddc_3));
+            log_info("Load DDC Complete");
+
+
+            // Set Intel event mask 0xfc52
+            state++;
+            transport_send_cmd(&hci_intel_set_event_mask, 0x87, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00);
             break;
+
         case 13:
+            // 9F FC 01 00
             state++;
-            transport_send_packet(HCI_ACL_DATA_PACKET, intel_ibt_11_5_ddc_4, sizeof(intel_ibt_11_5_ddc_4));
+            transport_send_cmd(&hci_intel_fc9f, 0x00);
+            break;
+
+        case 14:
+            (*done)(0);
             break;
 
         default:
@@ -306,8 +380,9 @@ static void transport_packet_handler (uint8_t packet_type, uint8_t *packet, uint
     }
 }
 
-void btstack_chipset_intel_download_firmware(const hci_transport_t * hci_transport, void (*done)(int result)){
-	(void) done;
+void btstack_chipset_intel_download_firmware(const hci_transport_t * hci_transport, void (*callback)(int result)){
+
+    done = callback;
 
 	transport = hci_transport;;
     // transport->init(NULL);
