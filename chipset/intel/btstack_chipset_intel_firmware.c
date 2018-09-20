@@ -175,6 +175,9 @@ static void dump_intel_boot_params(intel_boot_params_t * boot_params){
     log_info("OTC BD_ADDR:  %s", bd_addr_to_str(addr));
 }
 
+static int vendor_firmware_complete_received;
+static int waiting_for_command_complete;
+
 static void state_machine(uint8_t * packet){
     intel_version_t     * version;
     intel_boot_params_t * boot_params;
@@ -182,6 +185,18 @@ static void state_machine(uint8_t * packet){
     int res;
     uint16_t buffer_offset;
     bd_addr_t addr;
+
+    if (packet){
+        // firmware upload complete event?
+        if (packet[0] == 0xff && packet[2] == 0x06) {
+            vendor_firmware_complete_received = 1;                
+        }
+
+        // command complete
+        if (packet[0] == 0x0e){
+            waiting_for_command_complete = 0;
+        }
+    }
 
     switch (state){
         case 0:
@@ -238,6 +253,8 @@ static void state_machine(uint8_t * packet){
                 return;
             }
 
+            vendor_firmware_complete_received = 0;
+
             // send CCS segment - offset 0
             intel_send_fragment(0x00, 128);
             break;
@@ -289,12 +306,14 @@ static void state_machine(uint8_t * packet){
             } while ((buffer_offset & 3) != 0);
 
             if (buffer_offset == 0) break;
+
+            waiting_for_command_complete = 1;
             transport_send_intel_secure(0x01, fw_buffer, buffer_offset);
             break;
+
         case 9:
-            // expect Vendor Specific Event
-            if (packet[0] != 0xff) break;
-            if (packet[2] != 0x06) break;
+            // expect Vendor Specific Event 0x06
+            if (!vendor_firmware_complete_received) break;
 
             printf("Firmware upload complete\n");
             log_info("Vendor Event 0x06 - firmware complete");
@@ -305,6 +324,7 @@ static void state_machine(uint8_t * packet){
             break;
 
         case 10:
+            // expect Vendor Specific Event 0x02
             if (packet[0] != 0xff) break;
             if (packet[2] != 0x02) break;
 
