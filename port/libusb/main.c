@@ -65,14 +65,16 @@
 #include "btstack_tlv_posix.h"
 #include "btstack_chipset_intel_firmware.h"
 
-#define TEST_USB
-
 #define TLV_DB_PATH_PREFIX "/tmp/btstack_"
 #define TLV_DB_PATH_POSTFIX ".tlv"
 static char tlv_db_path[100];
 static const btstack_tlv_t * tlv_impl;
 static btstack_tlv_posix_t   tlv_context;
 static bd_addr_t             local_addr;
+
+static int main_argc;
+static const char ** main_argv;
+static const hci_transport_t * transport;
 
 int btstack_main(int argc, const char * argv[]);
 
@@ -120,6 +122,32 @@ void hal_led_toggle(void){
     printf("LED State %u\n", led_state);
 }
 
+static void intel_firmware_done(int result){
+
+    printf("Done %x\n", result);
+
+    // close
+    transport->close();
+
+    // init HCI
+    hci_init(transport, NULL);
+
+#ifdef ENABLE_CLASSIC
+    hci_set_link_key_db(btstack_link_key_db_fs_instance());
+#endif    
+
+#ifdef HAVE_PORTAUDIO
+    btstack_audio_set_instance(btstack_audio_portaudio_get_instance());
+#endif
+
+    // inform about BTstack state
+    hci_event_callback_registration.callback = &packet_handler;
+    hci_add_event_handler(&hci_event_callback_registration);
+
+    // setup app
+    btstack_main(main_argc, main_argv);
+}
+
 #define USB_MAX_PATH_LEN 7
 int main(int argc, const char * argv[]){
 
@@ -165,34 +193,12 @@ int main(int argc, const char * argv[]){
     printf("Packet Log: %s\n", pklg_path);
     hci_dump_open(pklg_path, HCI_DUMP_PACKETLOGGER);
 
-#ifdef TEST_USB
     // setup USB Transport
-    const hci_transport_t * transport = hci_transport_usb_instance();
-    btstack_chipset_intel_download_firmware(transport, NULL);
-
-#else
-
-    // init HCI
-	hci_init(hci_transport_usb_instance(), NULL);
-
-#ifdef ENABLE_CLASSIC
-    hci_set_link_key_db(btstack_link_key_db_fs_instance());
-#endif    
-
-#ifdef HAVE_PORTAUDIO
-    btstack_audio_set_instance(btstack_audio_portaudio_get_instance());
-#endif
-
-    // inform about BTstack state
-    hci_event_callback_registration.callback = &packet_handler;
-    hci_add_event_handler(&hci_event_callback_registration);
+    transport = hci_transport_usb_instance();
+    btstack_chipset_intel_download_firmware(transport, &intel_firmware_done);
 
     // handle CTRL-c
     signal(SIGINT, sigint_handler);
-
-    // setup app
-    btstack_main(argc, argv);
-#endif
 
     // go
     btstack_run_loop_execute();    
