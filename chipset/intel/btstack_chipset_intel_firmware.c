@@ -141,7 +141,7 @@ static int intel_send_ddc(void){
     int res;
     // read len
     res = fread(fw_buffer, 1, 1, fw_file);
-    log_info("offset %6u, read 1 -> res %d", fw_offset, 1, res);
+    log_info("offset %6u, read 1 -> res %d", fw_offset, res);
     if (res == 0) return -1;
     uint8_t len = fw_buffer[0];
     fw_offset += 1;
@@ -227,6 +227,7 @@ static void state_machine(uint8_t * packet){
             // firmware file
             snprintf(fw_name, sizeof(fw_name), "ibt-%u-%u.sfi", hw_variant, dev_revid);
             log_info("Open firmware %s", fw_name);
+            printf("Firwmare %s\n", fw_name);
 
             // open firmware file
             fw_offset = 0;
@@ -368,8 +369,9 @@ static void state_machine(uint8_t * packet){
 }
 
 static void transport_packet_handler (uint8_t packet_type, uint8_t *packet, uint16_t size){
+    UNUSED(packet_type);
+    // we also get events with packet_type ACL from the controller
     hci_dump_packet(HCI_EVENT_PACKET, 1, packet, size);
-    // if (packet_type != HCI_EVENT_PACKET) return;
     switch (hci_event_packet_get_type(packet)){
         case HCI_EVENT_COMMAND_COMPLETE:
         case HCI_EVENT_VENDOR_SPECIFIC:
