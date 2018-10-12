@@ -135,7 +135,7 @@ static btstack_linked_list_t rfcomm_services = NULL;
 static gap_security_level_t rfcomm_security_level;
 
 #ifdef ENABLE_L2CAP_ENHANCED_RETRANSMISSION_MODE
-// static uint8_t outgoing_buffer[1000];
+static uint8_t outgoing_buffer[1030];
 static l2cap_ertm_config_t * l2cap_ertm_config;
 static uint8_t             * l2cap_ertm_buffer;
 static uint32_t              l2cap_ertm_buffer_size;
@@ -486,9 +486,13 @@ static int rfcomm_send_packet_for_multiplexer(rfcomm_multiplexer_t *multiplexer,
 
     if (!l2cap_can_send_packet_now(multiplexer->l2cap_cid)) return BTSTACK_ACL_BUFFERS_FULL;
     
+#ifdef ENABLE_L2CAP_ENHANCED_RETRANSMISSION_MODE
+    uint8_t * rfcomm_out_buffer = outgoing_buffer;
+#else
     l2cap_reserve_packet_buffer();
     uint8_t * rfcomm_out_buffer = l2cap_get_outgoing_buffer();
-    
+#endif
+
 	uint16_t pos = 0;
 	uint8_t crc_fields = 3;
 	
@@ -521,7 +525,11 @@ static int rfcomm_send_packet_for_multiplexer(rfcomm_multiplexer_t *multiplexer,
 	}
 	rfcomm_out_buffer[pos++] =  btstack_crc8_calc(rfcomm_out_buffer, crc_fields); // calc fcs
 
+#ifdef ENABLE_L2CAP_ENHANCED_RETRANSMISSION_MODE
+    int err = l2cap_send(multiplexer->l2cap_cid, rfcomm_out_buffer, pos);
+#else
     int err = l2cap_send_prepared(multiplexer->l2cap_cid, pos);
+#endif
 
     return err;
 }
@@ -532,7 +540,11 @@ static int rfcomm_send_uih_prepared(rfcomm_multiplexer_t *multiplexer, uint8_t d
     uint8_t address = (1 << 0) | (multiplexer->outgoing << 1) | (dlci << 2); 
     uint8_t control = BT_RFCOMM_UIH;
 
+#ifdef ENABLE_L2CAP_ENHANCED_RETRANSMISSION_MODE
+    uint8_t * rfcomm_out_buffer = outgoing_buffer;
+#else
     uint8_t * rfcomm_out_buffer = l2cap_get_outgoing_buffer();
+#endif
 
     uint16_t pos = 0;
     rfcomm_out_buffer[pos++] = address;
@@ -546,7 +558,11 @@ static int rfcomm_send_uih_prepared(rfcomm_multiplexer_t *multiplexer, uint8_t d
     // UIH frames only calc FCS over address + control (5.1.1)
     rfcomm_out_buffer[pos++] =  btstack_crc8_calc(rfcomm_out_buffer, 2); // calc fcs
     
+#ifdef ENABLE_L2CAP_ENHANCED_RETRANSMISSION_MODE
+    int err = l2cap_send(multiplexer->l2cap_cid, rfcomm_out_buffer, pos);
+#else
     int err = l2cap_send_prepared(multiplexer->l2cap_cid, pos);
+#endif
 
     return err;
 }
@@ -2133,15 +2149,28 @@ uint16_t rfcomm_get_max_frame_size(uint16_t rfcomm_cid){
 
 // pre: rfcomm_can_send_packet_now(rfcomm_cid) == true
 int rfcomm_reserve_packet_buffer(void){
+#ifdef ENABLE_L2CAP_ENHANCED_RETRANSMISSION_MODE
+    log_error("rfcomm_reserve_packet_buffer should not get called with ERTM");
+    return 0;
+#else
     return l2cap_reserve_packet_buffer();
+#endif
 }
 
 void rfcomm_release_packet_buffer(void){
+#ifdef ENABLE_L2CAP_ENHANCED_RETRANSMISSION_MODE
+    log_error("rfcomm_release_packet_buffer should not get called with ERTM");
+#else
     l2cap_release_packet_buffer();
+#endif
 }
 
 uint8_t * rfcomm_get_outgoing_buffer(void){
+#ifdef ENABLE_L2CAP_ENHANCED_RETRANSMISSION_MODE
+    uint8_t * rfcomm_out_buffer = outgoing_buffer;
+#else
     uint8_t * rfcomm_out_buffer = l2cap_get_outgoing_buffer();
+#endif
     // address + control + length (16) + no credit field
     return &rfcomm_out_buffer[4];
 }
@@ -2155,10 +2184,18 @@ int rfcomm_send_prepared(uint16_t rfcomm_cid, uint16_t len){
 
     int err = rfcomm_assert_send_valid(channel, len);
     if (err) return err;
+
+#ifdef ENABLE_L2CAP_ENHANCED_RETRANSMISSION_MODE
+    if (!l2cap_can_send_packet_now(channel->multiplexer->l2cap_cid)){
+        log_error("rfcomm_send_prepared: l2cap cannot send now");
+        return BTSTACK_ACL_BUFFERS_FULL;
+    }
+#else
     if (!l2cap_can_send_prepared_packet_now(channel->multiplexer->l2cap_cid)){
         log_error("rfcomm_send_prepared: l2cap cannot send now");
         return BTSTACK_ACL_BUFFERS_FULL;
     }
+#endif
 
     // send might cause l2cap to emit new credits, update counters first
     if (len){
@@ -2194,15 +2231,21 @@ int rfcomm_send(uint16_t rfcomm_cid, uint8_t *data, uint16_t len){
         return BTSTACK_ACL_BUFFERS_FULL;
     }
 
+#ifdef ENABLE_L2CAP_ENHANCED_RETRANSMISSION_MODE
+#else
     rfcomm_reserve_packet_buffer();
+#endif
     uint8_t * rfcomm_payload = rfcomm_get_outgoing_buffer();
 
     memcpy(rfcomm_payload, data, len);
     err = rfcomm_send_prepared(rfcomm_cid, len);    
 
+#ifdef ENABLE_L2CAP_ENHANCED_RETRANSMISSION_MODE
+#else
     if (err){
         rfcomm_release_packet_buffer();
     }
+#endif
 
     return err;
 }
