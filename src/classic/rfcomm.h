@@ -397,6 +397,14 @@ void      rfcomm_release_packet_buffer(void);
 
 /* API_END */
 
+// L2CAP ERTM addition
+/* @brief Enable L2CAP ERTM support for the next RFCOMM Multiplexer
+ * @param ertm_config
+ * @param buffer to store reassembled rx packet, out-of-order packets and unacknowledged outgoing packets with their tretransmission timers
+ * @param size of buffer
+ */
+void rfcomm_enable_l2cap_ertm(l2cap_ertm_config_t * ertm_config, uint8_t * buffer, uint32_t size);
+
 #if defined __cplusplus
 }
 #endif

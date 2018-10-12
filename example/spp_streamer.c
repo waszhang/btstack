@@ -82,6 +82,19 @@ static uint16_t  rfcomm_mtu;
 static uint16_t  rfcomm_cid = 0;
 // static uint32_t  data_to_send =  DATA_VOLUME;
 
+#ifdef ENABLE_L2CAP_ENHANCED_RETRANSMISSION_MODE
+static uint8_t ertm_buffer[20000];
+static l2cap_ertm_config_t ertm_config = {
+    0,  // ertm mandatory
+    8,  // max transmit
+    2000,
+    12000,
+    1000,    // l2cap ertm mtu
+    8,
+    8,
+};
+#endif
+
 /*
  * @section Track throughput
  * @text We calculate the throughput by setting a start time and measuring the amount of 
@@ -255,6 +268,11 @@ int btstack_main(int argc, const char * argv[])
 
     rfcomm_init();
     rfcomm_register_service(packet_handler, RFCOMM_SERVER_CHANNEL, 0xffff);
+
+#ifdef ENABLE_L2CAP_ENHANCED_RETRANSMISSION_MODE
+    rfcomm_enable_l2cap_ertm(&ertm_config, ertm_buffer, sizeof(ertm_buffer));
+#endif
+
 
     // init SDP, create record for SPP and register with SDP
     sdp_init();

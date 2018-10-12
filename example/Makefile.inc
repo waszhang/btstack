@@ -124,8 +124,6 @@ EXAMPLES = 					\
 	gatt_battery_query		\
 	gatt_browser            \
 	gatt_heart_rate_client	\
-	hfp_ag_demo             \
-	hfp_hf_demo             \
 	hid_host_demo           \
 	hid_keyboard_demo 	    \
 	hid_mouse_demo          \
@@ -140,7 +138,6 @@ EXAMPLES = 					\
 	le_streamer_client      \
 	led_counter				\
 	mod_player	            \
-	pbap_client_demo		\
 	sdp_bnep_query 			\
 	sdp_general_query		\
 	sdp_rfcomm_query		\

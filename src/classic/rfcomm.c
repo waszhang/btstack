@@ -134,6 +134,13 @@ static btstack_linked_list_t rfcomm_services = NULL;
 
 static gap_security_level_t rfcomm_security_level;
 
+#ifdef ENABLE_L2CAP_ENHANCED_RETRANSMISSION_MODE
+// static uint8_t outgoing_buffer[1000];
+static l2cap_ertm_config_t * l2cap_ertm_config;
+static uint8_t             * l2cap_ertm_buffer;
+static uint32_t              l2cap_ertm_buffer_size;
+#endif
+
 static int  rfcomm_channel_can_send(rfcomm_channel_t * channel);
 static int  rfcomm_channel_ready_for_open(rfcomm_channel_t *channel);
 static int rfcomm_channel_ready_to_send(rfcomm_channel_t * channel);
@@ -473,6 +480,8 @@ static rfcomm_service_t * rfcomm_service_for_channel(uint8_t server_channel){
 /**
  * @param credits - only used for RFCOMM flow control in UIH wiht P/F = 1
  */
+
+
 static int rfcomm_send_packet_for_multiplexer(rfcomm_multiplexer_t *multiplexer, uint8_t address, uint8_t control, uint8_t credits, uint8_t *data, uint16_t len){
 
     if (!l2cap_can_send_packet_now(multiplexer->l2cap_cid)) return BTSTACK_ACL_BUFFERS_FULL;
@@ -513,7 +522,7 @@ static int rfcomm_send_packet_for_multiplexer(rfcomm_multiplexer_t *multiplexer,
 	rfcomm_out_buffer[pos++] =  btstack_crc8_calc(rfcomm_out_buffer, crc_fields); // calc fcs
 
     int err = l2cap_send_prepared(multiplexer->l2cap_cid, pos);
-    
+
     return err;
 }
 
@@ -524,7 +533,7 @@ static int rfcomm_send_uih_prepared(rfcomm_multiplexer_t *multiplexer, uint8_t d
     uint8_t control = BT_RFCOMM_UIH;
 
     uint8_t * rfcomm_out_buffer = l2cap_get_outgoing_buffer();
-    
+
     uint16_t pos = 0;
     rfcomm_out_buffer[pos++] = address;
     rfcomm_out_buffer[pos++] = control;
@@ -538,7 +547,7 @@ static int rfcomm_send_uih_prepared(rfcomm_multiplexer_t *multiplexer, uint8_t d
     rfcomm_out_buffer[pos++] =  btstack_crc8_calc(rfcomm_out_buffer, 2); // calc fcs
     
     int err = l2cap_send_prepared(multiplexer->l2cap_cid, pos);
-    
+
     return err;
 }
 
@@ -969,6 +978,15 @@ static int rfcomm_hci_event_handler(uint8_t *packet, uint16_t size){
             multiplexer->l2cap_cid = l2cap_cid;
             // 
             multiplexer->state = RFCOMM_MULTIPLEXER_W4_SABM_0;
+#ifdef ENABLE_L2CAP_ENHANCED_RETRANSMISSION_MODE
+            if (l2cap_ertm_config){
+                log_info("Accept incoming L2CAP connection with ERTM");
+                l2cap_ertm_config_t * ertm_config = l2cap_ertm_config;
+                l2cap_ertm_config = NULL;
+                l2cap_accept_ertm_connection(l2cap_cid, ertm_config, l2cap_ertm_buffer, l2cap_ertm_buffer_size);
+                return 1;
+            }
+#endif
             log_info("L2CAP_EVENT_INCOMING_CONNECTION (l2cap_cid 0x%02x) for BLUETOOTH_PROTOCOL_RFCOMM => accept", l2cap_cid);
             l2cap_accept_connection(l2cap_cid);
             return 1;
@@ -2104,6 +2122,15 @@ static int rfcomm_assert_send_valid(rfcomm_channel_t * channel , uint16_t len){
     return 0;    
 }
 
+uint16_t rfcomm_get_max_frame_size(uint16_t rfcomm_cid){
+    rfcomm_channel_t * channel = rfcomm_channel_for_rfcomm_cid(rfcomm_cid);
+    if (!channel){
+        log_error("rfcomm_get_max_frame_size cid 0x%02x doesn't exist!", rfcomm_cid);
+        return 0;
+    }
+    return channel->max_frame_size;
+}
+
 // pre: rfcomm_can_send_packet_now(rfcomm_cid) == true
 int rfcomm_reserve_packet_buffer(void){
     return l2cap_reserve_packet_buffer();
@@ -2117,15 +2144,6 @@ uint8_t * rfcomm_get_outgoing_buffer(void){
     uint8_t * rfcomm_out_buffer = l2cap_get_outgoing_buffer();
     // address + control + length (16) + no credit field
     return &rfcomm_out_buffer[4];
-}
-
-uint16_t rfcomm_get_max_frame_size(uint16_t rfcomm_cid){
-    rfcomm_channel_t * channel = rfcomm_channel_for_rfcomm_cid(rfcomm_cid);
-    if (!channel){
-        log_error("rfcomm_get_max_frame_size cid 0x%02x doesn't exist!", rfcomm_cid);
-        return 0;
-    }
-    return channel->max_frame_size;
 }
 
 int rfcomm_send_prepared(uint16_t rfcomm_cid, uint16_t len){
@@ -2178,11 +2196,14 @@ int rfcomm_send(uint16_t rfcomm_cid, uint8_t *data, uint16_t len){
 
     rfcomm_reserve_packet_buffer();
     uint8_t * rfcomm_payload = rfcomm_get_outgoing_buffer();
+
     memcpy(rfcomm_payload, data, len);
     err = rfcomm_send_prepared(rfcomm_cid, len);    
+
     if (err){
         rfcomm_release_packet_buffer();
     }
+
     return err;
 }
 
@@ -2284,7 +2305,19 @@ static uint8_t rfcomm_channel_create_internal(btstack_packet_handler_t packet_ha
     if (multiplexer->state != RFCOMM_MULTIPLEXER_OPEN) {
         channel->state = RFCOMM_CHANNEL_W4_MULTIPLEXER;
         uint16_t l2cap_cid = 0;
-        status = l2cap_create_channel(rfcomm_packet_handler, addr, BLUETOOTH_PROTOCOL_RFCOMM, l2cap_max_mtu(), &l2cap_cid);
+#ifdef ENABLE_L2CAP_ENHANCED_RETRANSMISSION_MODE
+        if (l2cap_ertm_config){
+            log_info("Create outgoing L2CAP connection with ERTM");
+            l2cap_ertm_config_t * ertm_config = l2cap_ertm_config;
+            l2cap_ertm_config = NULL;
+            status = l2cap_create_ertm_channel(rfcomm_packet_handler, addr, BLUETOOTH_PROTOCOL_RFCOMM, 
+                ertm_config, l2cap_ertm_buffer, l2cap_ertm_buffer_size, &l2cap_cid);
+        }
+        else
+#endif
+        {
+            status = l2cap_create_channel(rfcomm_packet_handler, addr, BLUETOOTH_PROTOCOL_RFCOMM, l2cap_max_mtu(), &l2cap_cid);
+        }
         if (status) goto fail;
         multiplexer->l2cap_cid = l2cap_cid;
         return 0;
@@ -2430,4 +2463,12 @@ void rfcomm_grant_credits(uint16_t rfcomm_cid, uint8_t credits){
     l2cap_request_can_send_now_event(channel->multiplexer->l2cap_cid);
 }
 
+#ifdef ENABLE_L2CAP_ENHANCED_RETRANSMISSION_MODE
+void rfcomm_enable_l2cap_ertm(l2cap_ertm_config_t * ertm_config, uint8_t * buffer, uint32_t size){
+    l2cap_ertm_config = ertm_config;
+    l2cap_ertm_buffer  = buffer;
+    l2cap_ertm_buffer_size = size;
+    log_info("L2CAP ERTM configured");
+}
+#endif
 
