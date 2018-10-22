@@ -509,6 +509,10 @@ static void l2cap_ertm_configure_channel(l2cap_channel_t * channel, l2cap_ertm_c
     // Workaround: try to actively negotiate "No FCS" and fall back to "FCS" if "No FCS" is rejected
     // This works as iOS accepts the "No FCS" request, hence the default value is only used on non-iOS devices
     channel->fcs_option = 0;
+
+
+    // u-blox test - default to FCS
+    channel->fcs_option = 1;
 }
 
 uint8_t l2cap_create_ertm_channel(btstack_packet_handler_t packet_handler, bd_addr_t address, uint16_t psm, 
