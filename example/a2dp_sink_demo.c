@@ -249,11 +249,31 @@ static int a2dp_and_avrcp_setup(void){
     return 0;
 }
 
+// linear resampling
+static uint32_t resample_src_pos;
+static uint32_t resample_src_step;
+static int16_t resample_last_sample[2];
+
+static void resample_init(void){
+    resample_src_pos = 0;
+    resample_last_sample[0] = 0;
+    resample_last_sample[1] = 0;
+}
+static uint16_t resample_block(int16_t * input_buffer, uint32_t input_samples, uint32_t src_step, int16_t * output_buffer){
+    UNUSED(src_step);
+    // .. todo
+    memcpy(output_buffer, input_buffer, input_samples * BYTES_PER_FRAME);
+    return input_samples;
+}
+static void resample_set_src_step(uint32_t src_step){
+    UNUSED(src_step);
+}
+
 static void playback_handler(int16_t * buffer, uint16_t num_samples){
     
     // called from lower-layer but guaranteed to be on main thread
 
-    // first fill from decoded_audio
+    // first fill from resampled audio
     uint32_t bytes_read;
     btstack_ring_buffer_read(&decoded_audio_ring_buffer, (uint8_t *) buffer, num_samples * BYTES_PER_FRAME, &bytes_read);
     buffer          += bytes_read / NUM_CHANNELS;
@@ -276,25 +296,26 @@ static void handle_pcm_data(int16_t * data, int num_samples, int num_channels, i
     UNUSED(context);
     UNUSED(num_channels);   // must be stereo == 2
 
+    // resample into request buffer
+    int16_t  output_buffer[128*2]; // 16 * 8 * 2
+    uint32_t resampled_samples = resample_block(data, num_samples, resample_src_step, output_buffer);
+
 #ifdef STORE_SBC_TO_WAV_FILE
-    wav_writer_write_int16(num_samples * NUM_CHANNELS, data);
+    wav_writer_write_int16(resampled_samples * NUM_CHANNELS, output_buffer);
     frame_count++;
 #endif
-
+    
     // store data in btstack_audio buffer first
-    if (request_samples){
-
-        int samples_to_copy = btstack_min(num_samples, request_samples);
-        memcpy(request_buffer, data, samples_to_copy * BYTES_PER_FRAME);
-        num_samples     -= samples_to_copy;
-        request_samples -= samples_to_copy;
-        data            += samples_to_copy * NUM_CHANNELS;
-        request_buffer  += samples_to_copy * NUM_CHANNELS;
-    }
+    int samples_to_copy = btstack_min(resampled_samples, request_samples);
+    memcpy(request_buffer, output_buffer, samples_to_copy * BYTES_PER_FRAME);
+    request_buffer    += samples_to_copy * NUM_CHANNELS;
+    request_samples   -= samples_to_copy;
+    resampled_samples -= samples_to_copy;
 
     // and rest in ring buffer
-    if (num_samples){
-        btstack_ring_buffer_write(&decoded_audio_ring_buffer, (uint8_t *) data, num_samples * BYTES_PER_FRAME);
+    int samples_to_store = resampled_samples - samples_to_copy;
+    if (samples_to_store){
+        btstack_ring_buffer_write(&decoded_audio_ring_buffer, (uint8_t *)&output_buffer[samples_to_copy * BYTES_PER_FRAME], samples_to_store * BYTES_PER_FRAME);
     }
 }
 
@@ -395,7 +416,7 @@ static void handle_l2cap_media_data_packet(uint8_t seid, uint8_t *packet, uint16
     }
 
     // dump
-    // printf("%6u %03u %d\n",  (int) btstack_run_loop_get_time_ms(), sbc_frames_in_buffer, sbc_samples_fix);
+    printf("%6u %03u %d\n",  (int) btstack_run_loop_get_time_ms(), sbc_frames_in_buffer, sbc_samples_fix);
     // log_info("%03u %d", sbc_frames_in_buffer, sbc_samples_fix);
 
 #ifdef STORE_SBC_TO_SBC_FILE
