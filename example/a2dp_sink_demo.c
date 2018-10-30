@@ -281,25 +281,8 @@ static void handle_pcm_data(int16_t * data, int num_samples, int num_channels, i
     frame_count++;
 #endif
 
-    int sbc_samples_fix_applied = 0;
-
-    // drop audio frame to fix drift
-    if (sbc_samples_fix < 0){
-        num_samples--;
-        data += NUM_CHANNELS;
-        sbc_samples_fix_applied = 1;
-    }
-
     // store data in btstack_audio buffer first
     if (request_samples){
-
-        // add audio frame to fix drift
-        if (!sbc_samples_fix_applied && sbc_samples_fix > 0){
-            memcpy(request_buffer, data, BYTES_PER_FRAME);
-            request_samples--;
-            request_buffer += NUM_CHANNELS;
-            sbc_samples_fix_applied = 1;
-        }
 
         int samples_to_copy = btstack_min(num_samples, request_samples);
         memcpy(request_buffer, data, samples_to_copy * BYTES_PER_FRAME);
@@ -311,13 +294,6 @@ static void handle_pcm_data(int16_t * data, int num_samples, int num_channels, i
 
     // and rest in ring buffer
     if (num_samples){
-
-        // add audio frame to fix drift
-        if (!sbc_samples_fix_applied && sbc_samples_fix > 0){
-            btstack_ring_buffer_write(&decoded_audio_ring_buffer, (uint8_t *) data, BYTES_PER_FRAME);
-            sbc_samples_fix_applied = 1;
-        }
-
         btstack_ring_buffer_write(&decoded_audio_ring_buffer, (uint8_t *) data, num_samples * BYTES_PER_FRAME);
     }
 }
