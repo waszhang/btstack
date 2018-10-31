@@ -49,7 +49,7 @@ void btstack_resample_set_factor(btstack_resample_t * context, uint32_t src_step
     context->src_step = src_step;
 }
 
-uint16_t btstack_resample_block(btstack_resample_t * context, const int16_t * input_buffer, uint32_t num_samples, int16_t * output_buffer){
+uint16_t btstack_resample_block(btstack_resample_t * context, const int16_t * input_buffer, uint32_t num_frames, int16_t * output_buffer){
     uint16_t dest_frames = 0;
     uint16_t dest_samples = 0;
     // samples between last sample of previous block and first sample in current block 
@@ -60,8 +60,9 @@ uint16_t btstack_resample_block(btstack_resample_t * context, const int16_t * in
             int s1 = context->last_sample[i];
             int s2 = input_buffer[i];
             int os = (s1*(0x10000 - t) + s2*t) >> 16;
-            output_buffer[dest_frames++] = os;
+            output_buffer[dest_samples++] = os;
         }
+        dest_frames++;
         context->src_pos += context->src_step;
     }
     // process current block
@@ -70,13 +71,13 @@ uint16_t btstack_resample_block(btstack_resample_t * context, const int16_t * in
         const uint16_t t       = context->src_pos & 0xffff;
         int index = src_pos * context->num_channels;
         int i;
-        if (src_pos >= (num_samples - 1)){
+        if (src_pos >= (num_frames - 1)){
             // store last sample
             for (i=0;i<context->num_channels;i++){
                 context->last_sample[i] = input_buffer[index++];
             }
             // samples processed
-            context->src_pos -= num_samples << 16;
+            context->src_pos -= num_frames << 16;
             break;
         }
         for (i=0;i<context->num_channels;i++){
