@@ -327,7 +327,7 @@ mod_player: ${CORE_OBJ} ${COMMON_OBJ} ${HXCMOD_PLAYER_OBJ} btstack_audio.o mod_p
 sine_player: ${CORE_OBJ} ${COMMON_OBJ} btstack_audio.o sine_player.c
 	${CC} $^ ${CFLAGS} ${LDFLAGS} -o $@
 
-sine_resampler: ${CORE_OBJ} ${COMMON_OBJ} btstack_audio.o sine_resampler.c
+sine_resampler: ${CORE_OBJ} ${COMMON_OBJ} btstack_resample.o sine_resampler.c
 	${CC} $^ ${CFLAGS} ${LDFLAGS} -o $@
 
 nordic_spp_le_counter: nordic_spp_le_counter.h ${CORE_OBJ} ${COMMON_OBJ} ${ATT_OBJ} ${GATT_SERVER_OBJ} ${SM_OBJ} nordic_spp_service_server.o nordic_spp_le_counter.c

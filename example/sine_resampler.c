@@ -41,6 +41,7 @@
  */
 
 #include "btstack.h"
+#include "btstack_resample.h"
 
 #ifdef HAVE_POSIX_FILE_IO
 #include "wav_util.h"
@@ -63,72 +64,6 @@ static const int16_t sine_int16[] = {
 
 #define NUM_CHANNELS 2
 
-
-
-// linear resampling
-#define BTSTACK_RESAMPLE_MAX_CHANNELS 2
-typedef struct {
-    uint32_t src_pos;
-    uint32_t src_step;
-    int16_t  last_sample[BTSTACK_RESAMPLE_MAX_CHANNELS];
-    int      num_channels;
-} btstack_resample_t;
-
-static void btstack_resample_init(btstack_resample_t * context, int num_channels){
-    context->src_pos = 0;
-    context->src_step = 0x10000;  // default resampling 1.0
-    context->last_sample[0] = 0;
-    context->last_sample[1] = 0;
-    context->num_channels   = num_channels;
-}
-
-static void btstack_resample_set_src_step(btstack_resample_t * context, uint32_t src_step){
-    context->src_step = src_step;
-}
-
-static uint16_t btstack_resample_block(btstack_resample_t * context, const int16_t * input_buffer, uint32_t num_samples, int16_t * output_buffer){
-    uint16_t dest_frames = 0;
-    uint16_t dest_samples = 0;
-    // samples between last sample of previous block and first sample in current block 
-    while (context->src_pos >= 0xffff0000){
-        const uint16_t t = context->src_pos & 0xffff;
-        int i;
-        for (i=0;i<context->num_channels;i++){
-            int s1 = context->last_sample[i];
-            int s2 = input_buffer[i];
-            int os = (s1*(0x10000 - t) + s2*t) >> 16;
-            output_buffer[dest_frames++] = os;
-        }
-        context->src_pos += context->src_step;
-    }
-    // process current block
-    while (1){
-        const uint16_t src_pos = context->src_pos >> 16;
-        const uint16_t t       = context->src_pos & 0xffff;
-        int index = src_pos * context->num_channels;
-        int i;
-        if (src_pos >= (num_samples - 1)){
-            // store last sample
-            for (i=0;i<context->num_channels;i++){
-                context->last_sample[i] = input_buffer[index++];
-            }
-            // samples processed
-            context->src_pos -= num_samples << 16;
-            break;
-        }
-        for (i=0;i<context->num_channels;i++){
-            int s1 = input_buffer[index++];
-            int s2 = input_buffer[index++];
-            int os = (s1*(0x10000 - t) + s2*t) >> 16;
-            output_buffer[dest_samples++] = os;
-        }
-        dest_frames++;
-        context->src_pos += context->src_step;
-    }
-    return dest_frames;
-}
-
-
 int btstack_main(int argc, const char * argv[]);
 int btstack_main(int argc, const char * argv[]){
     (void)argc;
@@ -139,7 +74,7 @@ int btstack_main(int argc, const char * argv[]){
 #endif
     btstack_resample_t resample;
     btstack_resample_init(&resample, NUM_CHANNELS);
-    btstack_resample_set_src_step(&resample, 0xff00);
+    btstack_resample_set_factor(&resample, 0xff00);
 
     int16_t input_buffer[TABLE_SIZE_441HZ * NUM_CHANNELS];
     int16_t output_buffer[200*NUM_CHANNELS];   // double the input size
