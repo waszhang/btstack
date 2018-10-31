@@ -67,6 +67,7 @@
 #include <string.h>
 
 #include "btstack.h"
+#include "btstack_resample.h"
 
 #define AVRCP_BROWSING_ENABLED 0
 
@@ -98,7 +99,6 @@ static btstack_sbc_mode_t mode = SBC_MODE_STANDARD;
 static uint8_t sbc_frame_storage[(OPTIMAL_FRAMES_MAX + ADDITIONAL_FRAMES) * MAX_SBC_FRAME_SIZE];
 static btstack_ring_buffer_t sbc_frame_ring_buffer;
 static unsigned int sbc_frame_size;
-static int sbc_samples_fix;
 
 // rest buffer for not fully used sbc frames
 static uint8_t decoded_audio_storage[(MAX_SBC_FRAME_SIZE+4) * BYTES_PER_FRAME];
@@ -184,6 +184,7 @@ static uint8_t media_sbc_codec_configuration[] = {
     2, 53
 }; 
 
+static btstack_resample_t resample_instance;
 
 /* @section Main Application Setup
  *
@@ -249,26 +250,6 @@ static int a2dp_and_avrcp_setup(void){
     return 0;
 }
 
-// linear resampling
-static uint32_t resample_src_pos;
-static uint32_t resample_src_step;
-static int16_t resample_last_sample[2];
-
-static void resample_init(void){
-    resample_src_pos = 0;
-    resample_last_sample[0] = 0;
-    resample_last_sample[1] = 0;
-}
-static uint16_t resample_block(int16_t * input_buffer, uint32_t input_samples, uint32_t src_step, int16_t * output_buffer){
-    UNUSED(src_step);
-    // .. todo
-    memcpy(output_buffer, input_buffer, input_samples * BYTES_PER_FRAME);
-    return input_samples;
-}
-static void resample_set_src_step(uint32_t src_step){
-    UNUSED(src_step);
-}
-
 static void playback_handler(int16_t * buffer, uint16_t num_samples){
     
     // called from lower-layer but guaranteed to be on main thread
@@ -296,9 +277,9 @@ static void handle_pcm_data(int16_t * data, int num_samples, int num_channels, i
     UNUSED(context);
     UNUSED(num_channels);   // must be stereo == 2
 
-    // resample into request buffer
-    int16_t  output_buffer[128*2]; // 16 * 8 * 2
-    uint32_t resampled_samples = resample_block(data, num_samples, resample_src_step, output_buffer);
+    // resample into request buffer - add some additional space for resampling
+    int16_t  output_buffer[(128+16)*2]; // 16 * 8 * 2
+    uint32_t resampled_samples = btstack_resample_block(&resample_instance, data, num_samples, output_buffer);
 
 #ifdef STORE_SBC_TO_WAV_FILE
     wav_writer_write_int16(resampled_samples * NUM_CHANNELS, output_buffer);
@@ -334,6 +315,7 @@ static int media_processing_init(avdtp_media_codec_configuration_sbc_t configura
 
     btstack_ring_buffer_init(&sbc_frame_ring_buffer, sbc_frame_storage, sizeof(sbc_frame_storage));
     btstack_ring_buffer_init(&decoded_audio_ring_buffer, decoded_audio_storage, sizeof(decoded_audio_storage));
+    btstack_resample_init(&resample_instance, configuration.num_channels);
 
     // setup audio playback
     const btstack_audio_t * audio = btstack_audio_get_instance();
@@ -407,17 +389,19 @@ static void handle_l2cap_media_data_packet(uint8_t seid, uint8_t *packet, uint16
 
     // decide on audio sync drift based on number of sbc frames in queue
     int sbc_frames_in_buffer = btstack_ring_buffer_bytes_available(&sbc_frame_ring_buffer) / sbc_frame_size;
+    uint32_t resampling_factor;
     if (sbc_frames_in_buffer < OPTIMAL_FRAMES_MIN){
-    	sbc_samples_fix = 1;	// duplicate last sample
+    	resampling_factor = 0x0FE00;    // stretch samples
     } else if (sbc_frames_in_buffer <= OPTIMAL_FRAMES_MAX){
-    	sbc_samples_fix = 0;	// nothing to do
+    	resampling_factor = 0x10000;    // nothing to do
     } else {
-    	sbc_samples_fix = -1;	// drop last sample
+    	resampling_factor = 0x10200;    // compress samples
     }
+    btstack_resample_set_factor(&resample_instance, resampling_factor);
 
     // dump
-    printf("%6u %03u %d\n",  (int) btstack_run_loop_get_time_ms(), sbc_frames_in_buffer, sbc_samples_fix);
-    // log_info("%03u %d", sbc_frames_in_buffer, sbc_samples_fix);
+    printf("%6u %03u %05x\n",  (int) btstack_run_loop_get_time_ms(), sbc_frames_in_buffer, resampling_factor);
+    // log_info("%03u %05x", sbc_frames_in_buffer, resampling_factor);
 
 #ifdef STORE_SBC_TO_SBC_FILE
     fwrite(packet+pos, size-pos, 1, sbc_file);
