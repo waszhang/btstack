@@ -95,13 +95,13 @@ static btstack_sbc_mode_t mode = SBC_MODE_STANDARD;
 // below 30: add samples, 30-40: fine, above 40: drop samples
 #define OPTIMAL_FRAMES_MIN 30
 #define OPTIMAL_FRAMES_MAX 40
-#define ADDITIONAL_FRAMES  10
+#define ADDITIONAL_FRAMES  20
 static uint8_t sbc_frame_storage[(OPTIMAL_FRAMES_MAX + ADDITIONAL_FRAMES) * MAX_SBC_FRAME_SIZE];
 static btstack_ring_buffer_t sbc_frame_ring_buffer;
 static unsigned int sbc_frame_size;
 
-// rest buffer for not fully used sbc frames
-static uint8_t decoded_audio_storage[(MAX_SBC_FRAME_SIZE+4) * BYTES_PER_FRAME];
+// rest buffer for not fully used sbc frames, with additional frames for resampling
+static uint8_t decoded_audio_storage[(128+16) * BYTES_PER_FRAME];
 static btstack_ring_buffer_t decoded_audio_ring_buffer;
 
 // 
@@ -110,6 +110,8 @@ static int audio_stream_started;
 // temp storage of lower-layer request
 static int16_t * request_buffer;
 static int       request_frames;
+
+#define STORE_FROM_PLAYBACK
 
 // WAV File
 #ifdef STORE_SBC_TO_WAV_FILE    
@@ -252,6 +254,13 @@ static int a2dp_and_avrcp_setup(void){
 
 static void playback_handler(int16_t * buffer, uint16_t num_frames){
 
+#ifdef STORE_FROM_PLAYBACK
+#ifdef STORE_SBC_TO_WAV_FILE
+    int       wav_samples = num_frames * NUM_CHANNELS;
+    int16_t * wav_buffer  = buffer;
+#endif
+#endif
+
     // called from lower-layer but guaranteed to be on main thread
 
     // first fill from resampled audio
@@ -263,12 +272,22 @@ static void playback_handler(int16_t * buffer, uint16_t num_frames){
     // then start decoding sbc frames using request_* globals
     request_buffer = buffer;
     request_frames = num_frames;
-    while (request_frames && btstack_ring_buffer_bytes_available(&sbc_frame_ring_buffer) >= sbc_frame_size){
-        // decode frame
-        uint8_t sbc_frame[MAX_SBC_FRAME_SIZE];
-        btstack_ring_buffer_read(&sbc_frame_ring_buffer, sbc_frame, sbc_frame_size, &bytes_read);
-        btstack_sbc_decoder_process_data(&state, 0, sbc_frame, sbc_frame_size);
+    while (request_frames){
+        if (btstack_ring_buffer_bytes_available(&sbc_frame_ring_buffer) >= sbc_frame_size){
+            // decode frame
+            uint8_t sbc_frame[MAX_SBC_FRAME_SIZE];
+            btstack_ring_buffer_read(&sbc_frame_ring_buffer, sbc_frame, sbc_frame_size, &bytes_read);
+            btstack_sbc_decoder_process_data(&state, 0, sbc_frame, sbc_frame_size);
+        } else {
+            printf("Error: no SBC frame ready in ring buffer\n");
+        }
     }
+
+#ifdef STORE_FROM_PLAYBACK
+#ifdef STORE_SBC_TO_WAV_FILE
+    wav_writer_write_int16(wav_samples, wav_buffer);
+#endif
+#endif
 }
 
 static void handle_pcm_data(int16_t * data, int num_frames, int num_channels, int sample_rate, void * context){
@@ -276,28 +295,49 @@ static void handle_pcm_data(int16_t * data, int num_frames, int num_channels, in
     UNUSED(context);
     UNUSED(num_channels);   // must be stereo == 2
 
+#ifdef STORE_DECODED
+    wav_writer_write_int16(num_frames * NUM_CHANNELS, data);
+#endif
+
     // resample into request buffer - add some additional space for resampling
     int16_t  output_buffer[(128+16) * NUM_CHANNELS]; // 16 * 8 * 2
     uint32_t resampled_frames = btstack_resample_block(&resample_instance, data, num_frames, output_buffer);
     
+#ifdef STORE_RESAMPLED
+#ifdef STORE_SBC_TO_WAV_FILE
+    wav_writer_write_int16(resampled_frames * NUM_CHANNELS, output_buffer);
+    frame_count++;
+#endif
+#endif
+
+    const btstack_audio_t * audio = btstack_audio_get_instance();
+    if (!audio) return;
+
     // store data in btstack_audio buffer first
     int frames_to_copy = btstack_min(resampled_frames, request_frames);
     memcpy(request_buffer, output_buffer, frames_to_copy * BYTES_PER_FRAME);
     request_frames  -= frames_to_copy;
     request_buffer  += frames_to_copy * NUM_CHANNELS;
 
+#ifdef STORE_BEFORE_PLAYBACK
 #ifdef STORE_SBC_TO_WAV_FILE
     wav_writer_write_int16(frames_to_copy * NUM_CHANNELS, output_buffer);
     frame_count++;
+#endif
 #endif
 
     // and rest in ring buffer
     int frames_to_store = resampled_frames - frames_to_copy;
     if (frames_to_store){
-        btstack_ring_buffer_write(&decoded_audio_ring_buffer, (uint8_t *)&output_buffer[frames_to_copy * NUM_CHANNELS], frames_to_store * BYTES_PER_FRAME);
+        int status = btstack_ring_buffer_write(&decoded_audio_ring_buffer, (uint8_t *)&output_buffer[frames_to_copy * NUM_CHANNELS], frames_to_store * BYTES_PER_FRAME);
+        if (status){
+            printf("Error storing samples in PCM ring buffer!!!\n");
+        }
+#ifdef STORE_BEFORE_PLAYBACK
 #ifdef STORE_SBC_TO_WAV_FILE
         wav_writer_write_int16(frames_to_store * NUM_CHANNELS, &output_buffer[frames_to_copy * NUM_CHANNELS]);
         frame_count++;
+#endif
 #endif
     }
 }
@@ -387,7 +427,10 @@ static void handle_l2cap_media_data_packet(uint8_t seid, uint8_t *packet, uint16
     // store sbc frame size for buffer management
     sbc_frame_size = (size-pos)/ sbc_header.num_frames;
         
-    btstack_ring_buffer_write(&sbc_frame_ring_buffer, packet+pos, size-pos);
+    int status = btstack_ring_buffer_write(&sbc_frame_ring_buffer, packet+pos, size-pos);
+    if (status){
+        printf("Error storing samples in SBC ring buffer!!!\n");
+    }
 
     // decide on audio sync drift based on number of sbc frames in queue
     int sbc_frames_in_buffer = btstack_ring_buffer_bytes_available(&sbc_frame_ring_buffer) / sbc_frame_size;
@@ -400,9 +443,6 @@ static void handle_l2cap_media_data_packet(uint8_t seid, uint8_t *packet, uint16
     	resampling_factor = 0x10200;    // compress samples
     }
 
-    // test
-    resampling_factor = 0x0FE00;    // stretch samples
-
     btstack_resample_set_factor(&resample_instance, resampling_factor);
 
     // dump
@@ -414,7 +454,7 @@ static void handle_l2cap_media_data_packet(uint8_t seid, uint8_t *packet, uint16
 #endif
 
     // start stream if enough frames buffered
-    if (!audio_stream_started && sbc_frames_in_buffer >= (OPTIMAL_FRAMES_MAX+OPTIMAL_FRAMES_MIN)/2){
+    if (!audio_stream_started && sbc_frames_in_buffer >= OPTIMAL_FRAMES_MIN){
         audio_stream_started = 1;
         // setup audio playback
         if (audio){
