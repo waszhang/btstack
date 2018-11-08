@@ -49,6 +49,9 @@
 
 #define TABLE_SIZE_441HZ            100
 
+#define STRINGIZE2(s) #s
+#define STRINGIZE(s) STRINGIZE2(s)
+
 static const int16_t sine_int16[] = {
      0,    2057,    4107,    6140,    8149,   10126,   12062,   13952,   15786,   17557,
  19260,   20886,   22431,   23886,   25247,   26509,   27666,   28714,   29648,   30466,
@@ -70,7 +73,7 @@ int btstack_main(int argc, const char * argv[]){
     (void)argv;
 
 #ifdef HAVE_POSIX_FILE_IO
-    wav_writer_open("sine_resampled.wav", NUM_CHANNELS, 44100);
+    wav_writer_open("sine_resampled-" STRINGIZE(NUM_CHANNELS) ".wav", NUM_CHANNELS, 44100);
 #endif
     btstack_resample_t resample;
     btstack_resample_init(&resample, NUM_CHANNELS);
