@@ -277,7 +277,9 @@ LDSCRIPT = STM32F407VGTx_FLASH.ld
 
 # libraries
 LIBS = -lc -lm -lnosys
-LIBDIR =
+#  -lPDMFilter_GCC
+LIBDIR = 
+# -L../src/bsp
 LDFLAGS = $(MCU) -specs=nano.specs -T$(LDSCRIPT) $(LIBDIR) $(LIBS) -Wl,-Map=$(BUILD_DIR)/$(TARGET).map,--cref -Wl,--gc-sections
 
 # default action: build all
@@ -293,8 +295,9 @@ LE_EXAMPLES = \
 	sm_pairing_central 
 
 EXAMPLES = 					\
+	audio_duplex            \
 	a2dp_sink_demo			\
-	a2dp_source_demo       \
+	a2dp_source_demo        \
 	ancs_client_demo		\
 	dut_mode_classic        \
 	gap_dedicated_bonding	\

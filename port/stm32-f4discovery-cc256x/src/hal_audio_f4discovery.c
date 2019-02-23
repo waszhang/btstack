@@ -35,17 +35,24 @@
  *
  */
 
+#define __BTSTACK_FILE__ "hal_audio_f4_discovery.c"
+
 #include "hal_audio.h"
 #include "stm32f4_discovery_audio.h"
+#include "btstack_debug.h"
 
+// output
 #define OUTPUT_BUFFER_NUM_SAMPLES       512
 #define NUM_OUTPUT_BUFFERS              2
 
 static void (*audio_played_handler)(uint8_t buffer_index);
 static int started;
 
-// our storage
 static int16_t output_buffer[NUM_OUTPUT_BUFFERS * OUTPUT_BUFFER_NUM_SAMPLES * 2];   // stereo
+
+// input
+static void (*audio_recorded_callback)(const int16_t * buffer, uint16_t num_samples);
+static uint16_t input_buffer[NUM_OUTPUT_BUFFERS * OUTPUT_BUFFER_NUM_SAMPLES];   // mono
 
 void  BSP_AUDIO_OUT_HalfTransfer_CallBack(void){
 	(*audio_played_handler)(0);
@@ -119,6 +126,13 @@ void hal_audio_sink_close(void){
 }
 
 
+void BSP_AUDIO_IN_TransferComplete_CallBack(void){
+    log_info("BSP_AUDIO_IN_TransferComplete_CallBack");
+}
+void BSP_AUDIO_IN_HalfTransfer_CallBack(void){
+    log_info("BSP_AUDIO_IN_HalfTransfer_CallBack");
+}
+
 /**
  * @brief Setup audio codec for recording using specified samplerate and number of channels
  * @param Channels
@@ -128,26 +142,26 @@ void hal_audio_sink_close(void){
 void hal_audio_source_init(uint8_t channels, 
                            uint32_t sample_rate,
                            void (*buffer_recorded_callback)(const int16_t * buffer, uint16_t num_samples)){
-    // TODO    
+    BSP_AUDIO_IN_Init(sample_rate, 16, channels);
+    audio_recorded_callback = buffer_recorded_callback;
 }
 
 /**
  * @brief Start stream
  */
 void hal_audio_source_start(void){
-    // TODO
+    BSP_AUDIO_IN_Record(input_buffer, NUM_OUTPUT_BUFFERS * OUTPUT_BUFFER_NUM_SAMPLES);
 }
 
 /**
  * @brief Stop stream
  */
 void hal_audio_source_stop(void){
-    // TODO
 }
 
 /**
  * @brief Close audio codec
  */
 void hal_audio_source_close(void){
-    // TODO
+    BSP_AUDIO_IN_Stop();
 }

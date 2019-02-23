@@ -132,7 +132,7 @@ b) RECORD A FILE:
 
 /* Includes ------------------------------------------------------------------*/
 #include "stm32f4_discovery_audio.h"
-
+#include "pdm_filter.h"
 /** @addtogroup BSP
   * @{
   */
@@ -182,7 +182,7 @@ I2S_HandleTypeDef                 hAudioOutI2s;
 /*### RECORDER ###*/
 I2S_HandleTypeDef                 hAudioInI2s;
 
-//PDMFilter_InitStruct Filter[DEFAULT_AUDIO_IN_CHANNEL_NBR];
+PDMFilter_InitStruct Filter[DEFAULT_AUDIO_IN_CHANNEL_NBR];
 __IO uint16_t AudioInVolume = DEFAULT_AUDIO_IN_VOLUME;
 /**
   * @}
@@ -193,8 +193,8 @@ __IO uint16_t AudioInVolume = DEFAULT_AUDIO_IN_VOLUME;
   */ 
 static uint8_t I2S3_Init(uint32_t AudioFreq);
 
-// static uint8_t I2S2_Init(uint32_t AudioFreq);
-// static void PDMDecoder_Init(uint32_t AudioFreq, uint32_t ChnlNbr);
+static uint8_t I2S2_Init(uint32_t AudioFreq);
+static void PDMDecoder_Init(uint32_t AudioFreq, uint32_t ChnlNbr);
 
 /**
   * @}
@@ -697,7 +697,7 @@ static uint8_t I2S3_Init(uint32_t AudioFreq)
   }
 }
 
-#if 0
+#if 1
 
 /**
   * @}
@@ -1060,7 +1060,7 @@ static void PDMDecoder_Init(uint32_t AudioFreq, uint32_t ChnlNbr)
        to make stereo audio streams */
     Filter[i].Out_MicChannels = 2;
     Filter[i].In_MicChannels = ChnlNbr; 
-    PDM_Filter_Init((PDMFilter_InitStruct *)&Filter[i]);
+    // PDM_Filter_Init((PDMFilter_InitStruct *)&Filter[i]);
   }  
 }
 
