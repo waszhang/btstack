@@ -1120,12 +1120,10 @@ void HAL_I2S_ErrorCallback(I2S_HandleTypeDef *hi2s)
   {
     BSP_AUDIO_OUT_Error_CallBack();
   }
-#if 0
   if(hi2s->Instance == I2S2)
   {
     BSP_AUDIO_IN_Error_Callback();
   }
-#endif
  }
 
 /**
